@@ -404,6 +404,188 @@ SELECT (
   (SELECT COUNT(*) FROM interceptions)
 )::bigint as total_deleted;
 
+-- name: CountAIBridgeSessions :one
+SELECT
+	COUNT(DISTINCT session_id)
+FROM
+	(
+		SELECT
+			COALESCE(
+				aibridge_interceptions.client_session_id,
+				aibridge_interceptions.thread_root_id::text,
+				aibridge_interceptions.id::text
+			) AS session_id
+		FROM
+			aibridge_interceptions
+		WHERE
+			-- Remove inflight interceptions (ones which lack an ended_at value).
+			aibridge_interceptions.ended_at IS NOT NULL
+			-- Filter by time frame
+			AND CASE
+				WHEN @started_after::timestamptz != '0001-01-01 00:00:00+00'::timestamptz THEN aibridge_interceptions.started_at >= @started_after::timestamptz
+				ELSE true
+			END
+			AND CASE
+				WHEN @started_before::timestamptz != '0001-01-01 00:00:00+00'::timestamptz THEN aibridge_interceptions.started_at <= @started_before::timestamptz
+				ELSE true
+			END
+			-- Filter initiator_id
+			AND CASE
+				WHEN @initiator_id::uuid != '00000000-0000-0000-0000-000000000000'::uuid THEN aibridge_interceptions.initiator_id = @initiator_id::uuid
+				ELSE true
+			END
+			-- Filter provider
+			AND CASE
+				WHEN @provider::text != '' THEN aibridge_interceptions.provider = @provider::text
+				ELSE true
+			END
+			-- Filter model
+			AND CASE
+				WHEN @model::text != '' THEN aibridge_interceptions.model = @model::text
+				ELSE true
+			END
+			-- Filter client
+			AND CASE
+				WHEN @client::text != '' THEN COALESCE(aibridge_interceptions.client, 'Unknown') = @client::text
+				ELSE true
+			END
+			-- Authorize Filter clause will be injected below in CountAuthorizedAIBridgeSessions
+			-- @authorize_filter
+	) sub
+;
+
+-- name: ListAIBridgeSessions :many
+WITH filtered_interceptions AS (
+	SELECT
+		aibridge_interceptions.*,
+		COALESCE(
+			aibridge_interceptions.client_session_id,
+			aibridge_interceptions.thread_root_id::text,
+			aibridge_interceptions.id::text
+		) AS session_id
+	FROM
+		aibridge_interceptions
+	WHERE
+		-- Remove inflight interceptions (ones which lack an ended_at value).
+		aibridge_interceptions.ended_at IS NOT NULL
+		-- Filter by time frame
+		AND CASE
+			WHEN @started_after::timestamptz != '0001-01-01 00:00:00+00'::timestamptz THEN aibridge_interceptions.started_at >= @started_after::timestamptz
+			ELSE true
+		END
+		AND CASE
+			WHEN @started_before::timestamptz != '0001-01-01 00:00:00+00'::timestamptz THEN aibridge_interceptions.started_at <= @started_before::timestamptz
+			ELSE true
+		END
+		-- Filter initiator_id
+		AND CASE
+			WHEN @initiator_id::uuid != '00000000-0000-0000-0000-000000000000'::uuid THEN aibridge_interceptions.initiator_id = @initiator_id::uuid
+			ELSE true
+		END
+		-- Filter provider
+		AND CASE
+			WHEN @provider::text != '' THEN aibridge_interceptions.provider = @provider::text
+			ELSE true
+		END
+		-- Filter model
+		AND CASE
+			WHEN @model::text != '' THEN aibridge_interceptions.model = @model::text
+			ELSE true
+		END
+		-- Filter client
+		AND CASE
+			WHEN @client::text != '' THEN COALESCE(aibridge_interceptions.client, 'Unknown') = @client::text
+			ELSE true
+		END
+		-- Authorize Filter clause will be injected below in ListAuthorizedAIBridgeSessions
+		-- @authorize_filter
+),
+session_base AS (
+	SELECT
+		fi.session_id,
+		-- Use the initiator of the first interception in the session.
+		(ARRAY_AGG(fi.initiator_id ORDER BY fi.started_at ASC, fi.id ASC))[1] AS initiator_id,
+		-- Use the client of the first interception in the session.
+		(ARRAY_AGG(fi.client ORDER BY fi.started_at ASC, fi.id ASC))[1] AS client,
+		-- Use the metadata of the first interception in the session.
+		(ARRAY_AGG(fi.metadata ORDER BY fi.started_at ASC, fi.id ASC))[1] AS metadata,
+		-- Collect distinct providers and models.
+		ARRAY(SELECT DISTINCT p FROM UNNEST(ARRAY_AGG(fi.provider)) AS p ORDER BY p) AS providers,
+		ARRAY(SELECT DISTINCT m FROM UNNEST(ARRAY_AGG(fi.model)) AS m ORDER BY m) AS models,
+		MIN(fi.started_at) AS started_at,
+		MAX(fi.ended_at) AS ended_at,
+		-- Count distinct threads in the session.
+		COUNT(DISTINCT COALESCE(fi.thread_root_id, fi.id)) AS threads
+	FROM
+		filtered_interceptions fi
+	GROUP BY
+		fi.session_id
+),
+session_tokens AS (
+	SELECT
+		fi.session_id,
+		COALESCE(SUM(tu.input_tokens), 0)::bigint AS input_tokens,
+		COALESCE(SUM(tu.output_tokens), 0)::bigint AS output_tokens
+	FROM
+		filtered_interceptions fi
+	LEFT JOIN
+		aibridge_token_usages tu ON fi.id = tu.interception_id
+	GROUP BY
+		fi.session_id
+),
+session_last_prompt AS (
+	SELECT DISTINCT ON (fi.session_id)
+		fi.session_id,
+		up.prompt
+	FROM
+		filtered_interceptions fi
+	JOIN
+		aibridge_user_prompts up ON fi.id = up.interception_id
+	ORDER BY
+		fi.session_id, up.created_at DESC, up.id DESC
+)
+SELECT
+	sb.session_id,
+	visible_users.id AS user_id,
+	visible_users.username AS user_username,
+	visible_users.name AS user_name,
+	visible_users.avatar_url AS user_avatar_url,
+	sb.providers::text[] AS providers,
+	sb.models::text[] AS models,
+	COALESCE(sb.client, '')::varchar(64) AS client,
+	sb.metadata::jsonb AS metadata,
+	sb.started_at::timestamptz AS started_at,
+	sb.ended_at::timestamptz AS ended_at,
+	sb.threads,
+	COALESCE(st.input_tokens, 0)::bigint AS input_tokens,
+	COALESCE(st.output_tokens, 0)::bigint AS output_tokens,
+	slp.prompt AS last_prompt
+FROM
+	session_base sb
+JOIN
+	visible_users ON visible_users.id = sb.initiator_id
+LEFT JOIN
+	session_tokens st ON st.session_id = sb.session_id
+LEFT JOIN
+	session_last_prompt slp ON slp.session_id = sb.session_id
+WHERE
+	-- Cursor pagination
+	CASE
+		WHEN @after_session_id::text != '' THEN (
+			(sb.started_at, sb.session_id) < (
+				(SELECT started_at FROM session_base WHERE session_id = @after_session_id),
+				@after_session_id::text
+			)
+		)
+		ELSE true
+	END
+ORDER BY
+	sb.started_at DESC,
+	sb.session_id DESC
+LIMIT COALESCE(NULLIF(@limit_::integer, 0), 100)
+OFFSET @offset_
+;
+
 -- name: ListAIBridgeModels :many
 SELECT
 	model
