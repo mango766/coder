@@ -16,6 +16,7 @@ import {
 	DropdownMenuTrigger,
 } from "components/DropdownMenu/DropdownMenu";
 import { EmptyState } from "components/EmptyState/EmptyState";
+import { UsersFilter } from "components/Filter/UsersFilter";
 import { LastSeen } from "components/LastSeen/LastSeen";
 import { Spinner } from "components/Spinner/Spinner";
 import { Stack } from "components/Stack/Stack";
@@ -46,6 +47,7 @@ const GroupMembersPage: FC = () => {
 		organization,
 		permissions,
 		groupQuery,
+		filterProps,
 	} = useOutletContext<GroupPageOutletContext>();
 	const queryClient = useQueryClient();
 	const addMemberMutation = useMutation(addMember(queryClient, organization));
@@ -57,26 +59,30 @@ const GroupMembersPage: FC = () => {
 
 	return (
 		<div className="flex flex-col w-full gap-1 pb-8">
-			{canUpdateGroup && groupData && !isEveryoneGroup(groupData) && (
-				<AddGroupMember
-					isLoading={addMemberMutation.isPending}
-					organizationId={groupData.organization_id}
-					onSubmit={async (member, reset) => {
-						try {
-							await addMemberMutation.mutateAsync({
-								groupId,
-								userId: member.user_id,
-							});
-							reset();
-							await groupQuery.refetch();
-						} catch (error) {
-							toast.error(getErrorMessage(error, "Failed to add member."), {
-								description: getErrorDetail(error),
-							});
-						}
-					}}
-				/>
-			)}
+			<div className="flex flex-row justify-between">
+				<UsersFilter {...filterProps} />
+
+				{canUpdateGroup && groupData && !isEveryoneGroup(groupData) && (
+					<AddGroupMember
+						isLoading={addMemberMutation.isPending}
+						organizationId={groupData.organization_id}
+						onSubmit={async (member, reset) => {
+							try {
+								await addMemberMutation.mutateAsync({
+									groupId,
+									userId: member.user_id,
+								});
+								reset();
+								await groupQuery.refetch();
+							} catch (error) {
+								toast.error(getErrorMessage(error, "Failed to add member."), {
+									description: getErrorDetail(error),
+								});
+							}
+						}}
+					/>
+				)}
+			</div>
 
 			<Table>
 				<TableHeader>

@@ -36,7 +36,9 @@ const meta: Meta<typeof GroupPage> = {
 };
 
 const groupQuery = (data: unknown) => ({
-	key: getGroupQueryKey(MockDefaultOrganization.name, MockGroup.name),
+	key: getGroupQueryKey(MockDefaultOrganization.name, MockGroup.name, {
+		q: "",
+	}),
 	data,
 });
 
