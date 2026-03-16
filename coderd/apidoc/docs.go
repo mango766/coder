@@ -12578,6 +12578,12 @@ const docTemplate = `{
         "codersdk.AIBridgeProxyConfig": {
             "type": "object",
             "properties": {
+                "allowed_private_cidrs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "cert_file": {
                     "type": "string"
                 },

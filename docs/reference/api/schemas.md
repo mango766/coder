@@ -616,6 +616,9 @@
 
 ```json
 {
+  "allowed_private_cidrs": [
+    "string"
+  ],
   "cert_file": "string",
   "domain_allowlist": [
     "string"
@@ -632,17 +635,18 @@
 
 ### Properties
 
-| Name                | Type            | Required | Restrictions | Description |
-|---------------------|-----------------|----------|--------------|-------------|
-| `cert_file`         | string          | false    |              |             |
-| `domain_allowlist`  | array of string | false    |              |             |
-| `enabled`           | boolean         | false    |              |             |
-| `key_file`          | string          | false    |              |             |
-| `listen_addr`       | string          | false    |              |             |
-| `tls_cert_file`     | string          | false    |              |             |
-| `tls_key_file`      | string          | false    |              |             |
-| `upstream_proxy`    | string          | false    |              |             |
-| `upstream_proxy_ca` | string          | false    |              |             |
+| Name                    | Type            | Required | Restrictions | Description |
+|-------------------------|-----------------|----------|--------------|-------------|
+| `allowed_private_cidrs` | array of string | false    |              |             |
+| `cert_file`             | string          | false    |              |             |
+| `domain_allowlist`      | array of string | false    |              |             |
+| `enabled`               | boolean         | false    |              |             |
+| `key_file`              | string          | false    |              |             |
+| `listen_addr`           | string          | false    |              |             |
+| `tls_cert_file`         | string          | false    |              |             |
+| `tls_key_file`          | string          | false    |              |             |
+| `upstream_proxy`        | string          | false    |              |             |
+| `upstream_proxy_ca`     | string          | false    |              |             |
 
 ## codersdk.AIBridgeTokenUsage
 
@@ -743,6 +747,9 @@
 ```json
 {
   "aibridge_proxy": {
+    "allowed_private_cidrs": [
+      "string"
+    ],
     "cert_file": "string",
     "domain_allowlist": [
       "string"
@@ -2672,6 +2679,9 @@ CreateWorkspaceRequest provides options for creating a new workspace. Only one o
     "agent_stat_refresh_interval": 0,
     "ai": {
       "aibridge_proxy": {
+        "allowed_private_cidrs": [
+          "string"
+        ],
         "cert_file": "string",
         "domain_allowlist": [
           "string"
@@ -3244,6 +3254,9 @@ CreateWorkspaceRequest provides options for creating a new workspace. Only one o
   "agent_stat_refresh_interval": 0,
   "ai": {
     "aibridge_proxy": {
+      "allowed_private_cidrs": [
+        "string"
+      ],
       "cert_file": "string",
       "domain_allowlist": [
         "string"
