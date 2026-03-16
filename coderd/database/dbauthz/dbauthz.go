@@ -2604,7 +2604,7 @@ func (q *querier) GetChatSystemPrompt(ctx context.Context) (string, error) {
 	return q.db.GetChatSystemPrompt(ctx)
 }
 
-func (q *querier) GetChatsByOwnerID(ctx context.Context, ownerID database.GetChatsByOwnerIDParams) ([]database.Chat, error) {
+func (q *querier) GetChatsByOwnerID(ctx context.Context, ownerID database.GetChatsByOwnerIDParams) ([]database.GetChatsByOwnerIDRow, error) {
 	return fetchWithPostFilter(q.auth, policy.ActionRead, q.db.GetChatsByOwnerID)(ctx, ownerID)
 }
 
@@ -5336,6 +5336,17 @@ func (q *querier) UpdateChatHeartbeat(ctx context.Context, arg database.UpdateCh
 		return 0, err
 	}
 	return q.db.UpdateChatHeartbeat(ctx, arg)
+}
+
+func (q *querier) UpdateChatLastReadMessageID(ctx context.Context, arg database.UpdateChatLastReadMessageIDParams) error {
+	chat, err := q.db.GetChatByID(ctx, arg.ID)
+	if err != nil {
+		return err
+	}
+	if err := q.authorizeContext(ctx, policy.ActionUpdate, chat); err != nil {
+		return err
+	}
+	return q.db.UpdateChatLastReadMessageID(ctx, arg)
 }
 
 func (q *querier) UpdateChatMessageByID(ctx context.Context, arg database.UpdateChatMessageByIDParams) (database.ChatMessage, error) {

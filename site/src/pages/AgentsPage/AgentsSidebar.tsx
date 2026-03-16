@@ -302,6 +302,7 @@ interface ChatTreeContextValue {
 	readonly modelOptions: readonly ModelSelectorOption[];
 	readonly modelConfigs: readonly ChatModelConfig[];
 	readonly chatErrorReasons: Record<string, string>;
+	readonly activeChatId: string | undefined;
 	readonly isArchiving: boolean;
 	readonly archivingChatId: string | null;
 	readonly toggleExpanded: (chatID: string) => void;
@@ -338,6 +339,7 @@ const ChatTreeNode = memo<ChatTreeNodeProps>(({ chat, isChildNode }) => {
 		modelOptions,
 		modelConfigs,
 		chatErrorReasons,
+		activeChatId,
 		isArchiving,
 		archivingChatId,
 		toggleExpanded,
@@ -346,6 +348,7 @@ const ChatTreeNode = memo<ChatTreeNodeProps>(({ chat, isChildNode }) => {
 		onArchiveAndDeleteWorkspace,
 	} = useChatTree();
 	const chatID = chat.id;
+	const isActiveChat = activeChatId === chatID;
 	const childIDs = (chatTree.childrenById.get(chatID) ?? []).filter((childID) =>
 		visibleChatIDs.has(childID),
 	);
@@ -445,10 +448,15 @@ const ChatTreeNode = memo<ChatTreeNodeProps>(({ chat, isChildNode }) => {
 										className={cn(
 											"block flex-1 truncate text-[13px] text-content-primary",
 											isActive && "font-medium",
+											chat.has_unread && !isActive && "font-semibold",
 										)}
 									>
 										{chat.title}
 									</span>
+									{chat.has_unread && !isActive && (
+										<span className="sr-only">(unread)</span>
+									)}
+									{" "}
 								</div>
 								<div className="flex min-w-0 items-center gap-1.5">
 									{hasLinkedDiffStatus && hasLineStats && (
@@ -485,9 +493,16 @@ const ChatTreeNode = memo<ChatTreeNodeProps>(({ chat, isChildNode }) => {
 						<Spinner className="h-3.5 w-3.5 text-content-secondary" loading />
 					) : (
 						<>
-							<span className="flex items-center justify-end text-xs text-content-secondary/50 tabular-nums [@media(hover:hover)]:group-hover:hidden group-has-[[data-state=open]]:hidden">
+							<span className="flex items-center justify-end gap-1.5 text-xs text-content-secondary/50 tabular-nums [@media(hover:hover)]:group-hover:hidden group-has-[[data-state=open]]:hidden">
 								{shortRelativeTime(chat.updated_at)}
-							</span>
+								{chat.has_unread && !isActiveChat && (
+									<span
+										className="h-2 w-2 shrink-0 rounded-full bg-content-link"
+										data-testid={`unread-indicator-${chat.id}`}
+										aria-hidden="true"
+									/>
+								)}
+							</span>{" "}
 							<DropdownMenu>
 								<DropdownMenuTrigger asChild>
 									<Button
@@ -647,6 +662,7 @@ export const AgentsSidebar: FC<AgentsSidebarProps> = (props) => {
 			modelOptions,
 			modelConfigs,
 			chatErrorReasons,
+			activeChatId,
 			isArchiving,
 			archivingChatId,
 			toggleExpanded,
@@ -662,6 +678,7 @@ export const AgentsSidebar: FC<AgentsSidebarProps> = (props) => {
 			modelOptions,
 			modelConfigs,
 			chatErrorReasons,
+			activeChatId,
 			isArchiving,
 			archivingChatId,
 			toggleExpanded,

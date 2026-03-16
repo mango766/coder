@@ -243,7 +243,7 @@ type sqlcQuerier interface {
 	GetChatProviders(ctx context.Context) ([]ChatProvider, error)
 	GetChatQueuedMessages(ctx context.Context, chatID uuid.UUID) ([]ChatQueuedMessage, error)
 	GetChatSystemPrompt(ctx context.Context) (string, error)
-	GetChatsByOwnerID(ctx context.Context, arg GetChatsByOwnerIDParams) ([]Chat, error)
+	GetChatsByOwnerID(ctx context.Context, arg GetChatsByOwnerIDParams) ([]GetChatsByOwnerIDRow, error)
 	GetConnectionLogsOffset(ctx context.Context, arg GetConnectionLogsOffsetParams) ([]GetConnectionLogsOffsetRow, error)
 	GetCryptoKeyByFeatureAndSequence(ctx context.Context, arg GetCryptoKeyByFeatureAndSequenceParams) (CryptoKey, error)
 	GetCryptoKeys(ctx context.Context) ([]CryptoKey, error)
@@ -737,6 +737,9 @@ type sqlcQuerier interface {
 	// Bumps the heartbeat timestamp for a running chat so that other
 	// replicas know the worker is still alive.
 	UpdateChatHeartbeat(ctx context.Context, arg UpdateChatHeartbeatParams) (int64, error)
+	// Updates the last read message ID for a chat. This is used to track
+	// which messages the owner has seen, enabling unread indicators.
+	UpdateChatLastReadMessageID(ctx context.Context, arg UpdateChatLastReadMessageIDParams) error
 	UpdateChatMessageByID(ctx context.Context, arg UpdateChatMessageByIDParams) (ChatMessage, error)
 	UpdateChatModelConfig(ctx context.Context, arg UpdateChatModelConfigParams) (ChatModelConfig, error)
 	UpdateChatProvider(ctx context.Context, arg UpdateChatProviderParams) (ChatProvider, error)

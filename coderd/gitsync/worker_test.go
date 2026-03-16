@@ -470,12 +470,12 @@ func TestWorker_MarkStale_UpsertAndPublish(t *testing.T) {
 	store := dbmock.NewMockStore(ctrl)
 
 	store.EXPECT().GetChatsByOwnerID(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, arg database.GetChatsByOwnerIDParams) ([]database.Chat, error) {
+		DoAndReturn(func(_ context.Context, arg database.GetChatsByOwnerIDParams) ([]database.GetChatsByOwnerIDRow, error) {
 			require.Equal(t, ownerID, arg.OwnerID)
-			return []database.Chat{
-				{ID: chat1, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: workspaceID, Valid: true}},
-				{ID: chat2, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: workspaceID, Valid: true}},
-				{ID: chatOther, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: uuid.New(), Valid: true}},
+			return []database.GetChatsByOwnerIDRow{
+				{Chat: database.Chat{ID: chat1, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: workspaceID, Valid: true}}},
+				{Chat: database.Chat{ID: chat2, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: workspaceID, Valid: true}}},
+				{Chat: database.Chat{ID: chatOther, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: uuid.New(), Valid: true}}},
 			}, nil
 		})
 	store.EXPECT().UpsertChatDiffStatusReference(gomock.Any(), gomock.Any()).
@@ -528,9 +528,9 @@ func TestWorker_MarkStale_NoMatchingChats(t *testing.T) {
 	store := dbmock.NewMockStore(ctrl)
 
 	store.EXPECT().GetChatsByOwnerID(gomock.Any(), gomock.Any()).
-		Return([]database.Chat{
-			{ID: uuid.New(), OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: uuid.New(), Valid: true}},
-			{ID: uuid.New(), OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: uuid.New(), Valid: true}},
+		Return([]database.GetChatsByOwnerIDRow{
+			{Chat: database.Chat{ID: uuid.New(), OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: uuid.New(), Valid: true}}},
+			{Chat: database.Chat{ID: uuid.New(), OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: uuid.New(), Valid: true}}},
 		}, nil)
 
 	mClock := quartz.NewMock(t)
@@ -556,9 +556,9 @@ func TestWorker_MarkStale_UpsertFails_ContinuesNext(t *testing.T) {
 	store := dbmock.NewMockStore(ctrl)
 
 	store.EXPECT().GetChatsByOwnerID(gomock.Any(), gomock.Any()).
-		Return([]database.Chat{
-			{ID: chat1, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: workspaceID, Valid: true}},
-			{ID: chat2, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: workspaceID, Valid: true}},
+		Return([]database.GetChatsByOwnerIDRow{
+			{Chat: database.Chat{ID: chat1, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: workspaceID, Valid: true}}},
+			{Chat: database.Chat{ID: chat2, OwnerID: ownerID, WorkspaceID: uuid.NullUUID{UUID: workspaceID, Valid: true}}},
 		}, nil)
 	store.EXPECT().UpsertChatDiffStatusReference(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, arg database.UpsertChatDiffStatusReferenceParams) (database.ChatDiffStatus, error) {

@@ -112,6 +112,7 @@ const buildChat = (overrides: Partial<Chat> = {}): Chat => ({
 	created_at: oneWeekAgo,
 	updated_at: oneWeekAgo,
 	archived: false,
+	has_unread: false,
 	last_error: null,
 	...overrides,
 });

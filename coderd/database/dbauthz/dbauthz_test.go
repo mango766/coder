@@ -617,9 +617,11 @@ func (s *MethodTestSuite) TestChats() {
 	s.Run("GetChatsByOwnerID", s.Mocked(func(dbm *dbmock.MockStore, faker *gofakeit.Faker, check *expects) {
 		c1 := testutil.Fake(s.T(), faker, database.Chat{})
 		c2 := testutil.Fake(s.T(), faker, database.Chat{})
+		r1 := database.GetChatsByOwnerIDRow{Chat: c1}
+		r2 := database.GetChatsByOwnerIDRow{Chat: c2}
 		params := database.GetChatsByOwnerIDParams{OwnerID: c1.OwnerID}
-		dbm.EXPECT().GetChatsByOwnerID(gomock.Any(), params).Return([]database.Chat{c1, c2}, nil).AnyTimes()
-		check.Args(params).Asserts(c1, policy.ActionRead, c2, policy.ActionRead).Returns([]database.Chat{c1, c2})
+		dbm.EXPECT().GetChatsByOwnerID(gomock.Any(), params).Return([]database.GetChatsByOwnerIDRow{r1, r2}, nil).AnyTimes()
+		check.Args(params).Asserts(r1, policy.ActionRead, r2, policy.ActionRead).Returns([]database.GetChatsByOwnerIDRow{r1, r2})
 	}))
 	s.Run("GetChatQueuedMessages", s.Mocked(func(dbm *dbmock.MockStore, faker *gofakeit.Faker, check *expects) {
 		chat := testutil.Fake(s.T(), faker, database.Chat{})
@@ -726,6 +728,16 @@ func (s *MethodTestSuite) TestChats() {
 		dbm.EXPECT().GetChatByID(gomock.Any(), chat.ID).Return(chat, nil).AnyTimes()
 		dbm.EXPECT().UpdateChatHeartbeat(gomock.Any(), arg).Return(int64(1), nil).AnyTimes()
 		check.Args(arg).Asserts(chat, policy.ActionUpdate).Returns(int64(1))
+	}))
+	s.Run("UpdateChatLastReadMessageID", s.Mocked(func(dbm *dbmock.MockStore, faker *gofakeit.Faker, check *expects) {
+		chat := testutil.Fake(s.T(), faker, database.Chat{})
+		arg := database.UpdateChatLastReadMessageIDParams{
+			ID:                chat.ID,
+			LastReadMessageID: 42,
+		}
+		dbm.EXPECT().GetChatByID(gomock.Any(), chat.ID).Return(chat, nil).AnyTimes()
+		dbm.EXPECT().UpdateChatLastReadMessageID(gomock.Any(), arg).Return(nil).AnyTimes()
+		check.Args(arg).Asserts(chat, policy.ActionUpdate)
 	}))
 	s.Run("UpdateChatMessageByID", s.Mocked(func(dbm *dbmock.MockStore, faker *gofakeit.Faker, check *expects) {
 		chat := testutil.Fake(s.T(), faker, database.Chat{})

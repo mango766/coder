@@ -2949,7 +2949,7 @@ WHERE
             $3::int
     )
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, last_read_message_id
 `
 
 type AcquireChatsParams struct {
@@ -2986,6 +2986,7 @@ func (q *sqlQuerier) AcquireChats(ctx context.Context, arg AcquireChatsParams) (
 			&i.Archived,
 			&i.LastError,
 			&i.Mode,
+			&i.LastReadMessageID,
 		); err != nil {
 			return nil, err
 		}
@@ -3189,7 +3190,7 @@ func (q *sqlQuerier) DeleteChatQueuedMessage(ctx context.Context, arg DeleteChat
 
 const getChatByID = `-- name: GetChatByID :one
 SELECT
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, last_read_message_id
 FROM
     chats
 WHERE
@@ -3216,12 +3217,13 @@ func (q *sqlQuerier) GetChatByID(ctx context.Context, id uuid.UUID) (Chat, error
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.LastReadMessageID,
 	)
 	return i, err
 }
 
 const getChatByIDForUpdate = `-- name: GetChatByIDForUpdate :one
-SELECT id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode FROM chats WHERE id = $1::uuid FOR UPDATE
+SELECT id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, last_read_message_id FROM chats WHERE id = $1::uuid FOR UPDATE
 `
 
 func (q *sqlQuerier) GetChatByIDForUpdate(ctx context.Context, id uuid.UUID) (Chat, error) {
@@ -3244,6 +3246,7 @@ func (q *sqlQuerier) GetChatByIDForUpdate(ctx context.Context, id uuid.UUID) (Ch
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.LastReadMessageID,
 	)
 	return i, err
 }
@@ -4015,7 +4018,13 @@ func (q *sqlQuerier) GetChatQueuedMessages(ctx context.Context, chatID uuid.UUID
 
 const getChatsByOwnerID = `-- name: GetChatsByOwnerID :many
 SELECT
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    chats.id, chats.owner_id, chats.workspace_id, chats.title, chats.status, chats.worker_id, chats.started_at, chats.heartbeat_at, chats.created_at, chats.updated_at, chats.parent_chat_id, chats.root_chat_id, chats.last_model_config_id, chats.archived, chats.last_error, chats.mode, chats.last_read_message_id,
+    EXISTS (
+        SELECT 1 FROM chat_messages cm
+        WHERE cm.chat_id = chats.id
+            AND cm.role = 'assistant'
+            AND cm.id > COALESCE(chats.last_read_message_id, 0)
+    ) AS has_unread
 FROM
     chats
 WHERE
@@ -4061,7 +4070,12 @@ type GetChatsByOwnerIDParams struct {
 	LimitOpt  int32        `db:"limit_opt" json:"limit_opt"`
 }
 
-func (q *sqlQuerier) GetChatsByOwnerID(ctx context.Context, arg GetChatsByOwnerIDParams) ([]Chat, error) {
+type GetChatsByOwnerIDRow struct {
+	Chat      Chat `db:"chat" json:"chat"`
+	HasUnread bool `db:"has_unread" json:"has_unread"`
+}
+
+func (q *sqlQuerier) GetChatsByOwnerID(ctx context.Context, arg GetChatsByOwnerIDParams) ([]GetChatsByOwnerIDRow, error) {
 	rows, err := q.db.QueryContext(ctx, getChatsByOwnerID,
 		arg.OwnerID,
 		arg.Archived,
@@ -4073,26 +4087,28 @@ func (q *sqlQuerier) GetChatsByOwnerID(ctx context.Context, arg GetChatsByOwnerI
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Chat
+	var items []GetChatsByOwnerIDRow
 	for rows.Next() {
-		var i Chat
+		var i GetChatsByOwnerIDRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.OwnerID,
-			&i.WorkspaceID,
-			&i.Title,
-			&i.Status,
-			&i.WorkerID,
-			&i.StartedAt,
-			&i.HeartbeatAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ParentChatID,
-			&i.RootChatID,
-			&i.LastModelConfigID,
-			&i.Archived,
-			&i.LastError,
-			&i.Mode,
+			&i.Chat.ID,
+			&i.Chat.OwnerID,
+			&i.Chat.WorkspaceID,
+			&i.Chat.Title,
+			&i.Chat.Status,
+			&i.Chat.WorkerID,
+			&i.Chat.StartedAt,
+			&i.Chat.HeartbeatAt,
+			&i.Chat.CreatedAt,
+			&i.Chat.UpdatedAt,
+			&i.Chat.ParentChatID,
+			&i.Chat.RootChatID,
+			&i.Chat.LastModelConfigID,
+			&i.Chat.Archived,
+			&i.Chat.LastError,
+			&i.Chat.Mode,
+			&i.Chat.LastReadMessageID,
+			&i.HasUnread,
 		); err != nil {
 			return nil, err
 		}
@@ -4154,7 +4170,7 @@ func (q *sqlQuerier) GetLastChatMessageByRole(ctx context.Context, arg GetLastCh
 
 const getStaleChats = `-- name: GetStaleChats :many
 SELECT
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, last_read_message_id
 FROM
     chats
 WHERE
@@ -4190,6 +4206,7 @@ func (q *sqlQuerier) GetStaleChats(ctx context.Context, staleThreshold time.Time
 			&i.Archived,
 			&i.LastError,
 			&i.Mode,
+			&i.LastReadMessageID,
 		); err != nil {
 			return nil, err
 		}
@@ -4223,7 +4240,7 @@ INSERT INTO chats (
     $7::chat_mode
 )
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, last_read_message_id
 `
 
 type InsertChatParams struct {
@@ -4264,6 +4281,7 @@ func (q *sqlQuerier) InsertChat(ctx context.Context, arg InsertChatParams) (Chat
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.LastReadMessageID,
 	)
 	return i, err
 }
@@ -4444,7 +4462,7 @@ SET
 WHERE
     id = $2::uuid
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, last_read_message_id
 `
 
 type UpdateChatByIDParams struct {
@@ -4472,6 +4490,7 @@ func (q *sqlQuerier) UpdateChatByID(ctx context.Context, arg UpdateChatByIDParam
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.LastReadMessageID,
 	)
 	return i, err
 }
@@ -4500,6 +4519,24 @@ func (q *sqlQuerier) UpdateChatHeartbeat(ctx context.Context, arg UpdateChatHear
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const updateChatLastReadMessageID = `-- name: UpdateChatLastReadMessageID :exec
+UPDATE chats
+SET last_read_message_id = $1::bigint
+WHERE id = $2::uuid
+`
+
+type UpdateChatLastReadMessageIDParams struct {
+	LastReadMessageID int64     `db:"last_read_message_id" json:"last_read_message_id"`
+	ID                uuid.UUID `db:"id" json:"id"`
+}
+
+// Updates the last read message ID for a chat. This is used to track
+// which messages the owner has seen, enabling unread indicators.
+func (q *sqlQuerier) UpdateChatLastReadMessageID(ctx context.Context, arg UpdateChatLastReadMessageIDParams) error {
+	_, err := q.db.ExecContext(ctx, updateChatLastReadMessageID, arg.LastReadMessageID, arg.ID)
+	return err
 }
 
 const updateChatMessageByID = `-- name: UpdateChatMessageByID :one
@@ -4559,7 +4596,7 @@ SET
 WHERE
     id = $6::uuid
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, last_read_message_id
 `
 
 type UpdateChatStatusParams struct {
@@ -4598,6 +4635,7 @@ func (q *sqlQuerier) UpdateChatStatus(ctx context.Context, arg UpdateChatStatusP
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.LastReadMessageID,
 	)
 	return i, err
 }
@@ -4611,7 +4649,7 @@ SET
 WHERE
     id = $2::uuid
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, last_read_message_id
 `
 
 type UpdateChatWorkspaceParams struct {
@@ -4639,6 +4677,7 @@ func (q *sqlQuerier) UpdateChatWorkspace(ctx context.Context, arg UpdateChatWork
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.LastReadMessageID,
 	)
 	return i, err
 }

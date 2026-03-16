@@ -115,7 +115,13 @@ ORDER BY
 
 -- name: GetChatsByOwnerID :many
 SELECT
-    *
+    sqlc.embed(chats),
+    EXISTS (
+        SELECT 1 FROM chat_messages cm
+        WHERE cm.chat_id = chats.id
+            AND cm.role = 'assistant'
+            AND cm.id > COALESCE(chats.last_read_message_id, 0)
+    ) AS has_unread
 FROM
     chats
 WHERE
@@ -700,3 +706,10 @@ LIMIT
     sqlc.arg('page_limit')::int
 OFFSET
     sqlc.arg('page_offset')::int;
+
+-- name: UpdateChatLastReadMessageID :exec
+-- Updates the last read message ID for a chat. This is used to track
+-- which messages the owner has seen, enabling unread indicators.
+UPDATE chats
+SET last_read_message_id = @last_read_message_id::bigint
+WHERE id = @id::uuid;

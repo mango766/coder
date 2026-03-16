@@ -2064,10 +2064,10 @@ func (mr *MockStoreMockRecorder) GetChatSystemPrompt(ctx any) *gomock.Call {
 }
 
 // GetChatsByOwnerID mocks base method.
-func (m *MockStore) GetChatsByOwnerID(ctx context.Context, arg database.GetChatsByOwnerIDParams) ([]database.Chat, error) {
+func (m *MockStore) GetChatsByOwnerID(ctx context.Context, arg database.GetChatsByOwnerIDParams) ([]database.GetChatsByOwnerIDRow, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetChatsByOwnerID", ctx, arg)
-	ret0, _ := ret[0].([]database.Chat)
+	ret0, _ := ret[0].([]database.GetChatsByOwnerIDRow)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -6957,6 +6957,20 @@ func (m *MockStore) UpdateChatHeartbeat(ctx context.Context, arg database.Update
 func (mr *MockStoreMockRecorder) UpdateChatHeartbeat(ctx, arg any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateChatHeartbeat", reflect.TypeOf((*MockStore)(nil).UpdateChatHeartbeat), ctx, arg)
+}
+
+// UpdateChatLastReadMessageID mocks base method.
+func (m *MockStore) UpdateChatLastReadMessageID(ctx context.Context, arg database.UpdateChatLastReadMessageIDParams) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateChatLastReadMessageID", ctx, arg)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateChatLastReadMessageID indicates an expected call of UpdateChatLastReadMessageID.
+func (mr *MockStoreMockRecorder) UpdateChatLastReadMessageID(ctx, arg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateChatLastReadMessageID", reflect.TypeOf((*MockStore)(nil).UpdateChatLastReadMessageID), ctx, arg)
 }
 
 // UpdateChatMessageByID mocks base method.

@@ -50,7 +50,7 @@ type Store interface {
 	) (database.ChatDiffStatus, error)
 	GetChatsByOwnerID(
 		ctx context.Context, arg database.GetChatsByOwnerIDParams,
-	) ([]database.Chat, error)
+	) ([]database.GetChatsByOwnerIDRow, error)
 }
 
 // EventPublisher notifies the frontend of diff status changes.
@@ -250,7 +250,7 @@ func (w *Worker) MarkStale(
 		return
 	}
 
-	chats, err := w.store.GetChatsByOwnerID(ctx, database.GetChatsByOwnerIDParams{
+	chatRows, err := w.store.GetChatsByOwnerID(ctx, database.GetChatsByOwnerIDParams{
 		OwnerID: ownerID,
 	})
 	if err != nil {
@@ -258,6 +258,11 @@ func (w *Worker) MarkStale(
 			slog.F("workspace_id", workspaceID),
 			slog.Error(err))
 		return
+	}
+
+	chats := make([]database.Chat, len(chatRows))
+	for i, row := range chatRows {
+		chats[i] = row.Chat
 	}
 
 	for _, chat := range filterChatsByWorkspaceID(chats, workspaceID) {

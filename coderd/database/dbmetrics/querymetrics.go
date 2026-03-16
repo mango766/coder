@@ -1135,7 +1135,7 @@ func (m queryMetricsStore) GetChatSystemPrompt(ctx context.Context) (string, err
 	return r0, r1
 }
 
-func (m queryMetricsStore) GetChatsByOwnerID(ctx context.Context, ownerID database.GetChatsByOwnerIDParams) ([]database.Chat, error) {
+func (m queryMetricsStore) GetChatsByOwnerID(ctx context.Context, ownerID database.GetChatsByOwnerIDParams) ([]database.GetChatsByOwnerIDRow, error) {
 	start := time.Now()
 	r0, r1 := m.s.GetChatsByOwnerID(ctx, ownerID)
 	m.queryLatencies.WithLabelValues("GetChatsByOwnerID").Observe(time.Since(start).Seconds())
@@ -3701,6 +3701,14 @@ func (m queryMetricsStore) UpdateChatHeartbeat(ctx context.Context, arg database
 	m.queryLatencies.WithLabelValues("UpdateChatHeartbeat").Observe(time.Since(start).Seconds())
 	m.queryCounts.WithLabelValues(httpmw.ExtractHTTPRoute(ctx), httpmw.ExtractHTTPMethod(ctx), "UpdateChatHeartbeat").Inc()
 	return r0, r1
+}
+
+func (m queryMetricsStore) UpdateChatLastReadMessageID(ctx context.Context, arg database.UpdateChatLastReadMessageIDParams) error {
+	start := time.Now()
+	r0 := m.s.UpdateChatLastReadMessageID(ctx, arg)
+	m.queryLatencies.WithLabelValues("UpdateChatLastReadMessageID").Observe(time.Since(start).Seconds())
+	m.queryCounts.WithLabelValues(httpmw.ExtractHTTPRoute(ctx), httpmw.ExtractHTTPMethod(ctx), "UpdateChatLastReadMessageID").Inc()
+	return r0
 }
 
 func (m queryMetricsStore) UpdateChatMessageByID(ctx context.Context, arg database.UpdateChatMessageByIDParams) (database.ChatMessage, error) {
