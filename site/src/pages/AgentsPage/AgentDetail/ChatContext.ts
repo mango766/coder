@@ -1,5 +1,5 @@
 import { watchChat } from "api/api";
-import { chatMessagesKey, updateInfiniteChatsCache } from "api/queries/chats";
+import { updateInfiniteChatsCache } from "api/queries/chats";
 import type * as TypesGen from "api/typesGenerated";
 import { asRecord, asString } from "components/ai-elements/runtimeTypeUtils";
 import {
@@ -9,7 +9,7 @@ import {
 	useRef,
 	useSyncExternalStore,
 } from "react";
-import { type InfiniteData, useQueryClient } from "react-query";
+import { useQueryClient } from "react-query";
 import type { OneWayMessageEvent } from "utils/OneWayWebSocket";
 import { createReconnectingWebSocket } from "utils/reconnectingWebSocket";
 import type { ChatDetailError } from "../usageLimitMessage";
@@ -99,6 +99,21 @@ const arraysEqual = <T>(left: readonly T[], right: readonly T[]): boolean => {
 	return true;
 };
 
+// Derives the cached list of queued messages from the message map.
+const deriveQueuedMessages = (
+	orderedIDs: readonly number[],
+	byID: Map<number, TypesGen.ChatMessage>,
+): readonly TypesGen.ChatMessage[] => {
+	const result: TypesGen.ChatMessage[] = [];
+	for (const id of orderedIDs) {
+		const msg = byID.get(id);
+		if (msg?.queued) {
+			result.push(msg);
+		}
+	}
+	return result;
+};
+
 const jsonValuesEqual = (left: unknown, right: unknown): boolean => {
 	if (left === right) {
 		return true;
@@ -119,23 +134,9 @@ const chatMessagesEqualByValue = (
 	left.model_config_id === right.model_config_id &&
 	left.created_at === right.created_at &&
 	left.role === right.role &&
+	left.queued === right.queued &&
 	jsonValuesEqual(left.content, right.content) &&
 	jsonValuesEqual(left.usage, right.usage);
-
-const chatQueuedMessagesEqualByID = (
-	left: readonly TypesGen.ChatQueuedMessage[],
-	right: readonly TypesGen.ChatQueuedMessage[],
-): boolean => {
-	if (left.length !== right.length) {
-		return false;
-	}
-	for (let index = 0; index < left.length; index += 1) {
-		if (left[index]?.id !== right[index]?.id) {
-			return false;
-		}
-	}
-	return true;
-};
 
 type ChatStoreState = {
 	messagesByID: Map<number, TypesGen.ChatMessage>;
@@ -144,7 +145,7 @@ type ChatStoreState = {
 	chatStatus: TypesGen.ChatStatus | null;
 	streamError: string | null;
 	retryState: { attempt: number; error: string } | null;
-	queuedMessages: readonly TypesGen.ChatQueuedMessage[];
+	queuedMessages: readonly TypesGen.ChatMessage[];
 	subagentStatusOverrides: Map<string, TypesGen.ChatStatus>;
 };
 
@@ -160,9 +161,8 @@ type ChatStore = {
 	};
 	applyMessagePart: (part: Record<string, unknown>) => void;
 	applyMessageParts: (parts: readonly Record<string, unknown>[]) => void;
-	setQueuedMessages: (
-		queuedMessages: readonly TypesGen.ChatQueuedMessage[] | undefined,
-	) => void;
+	replaceQueuedMessages: (messages: readonly TypesGen.ChatMessage[]) => void;
+	removeMessage: (id: number) => void;
 	setChatStatus: (status: TypesGen.ChatStatus | null) => void;
 	setStreamError: (reason: string | null) => void;
 	clearStreamError: () => void;
@@ -200,9 +200,27 @@ export const createChatStore = (): ChatStore => {
 	const setState = (
 		updater: (current: ChatStoreState) => ChatStoreState,
 	): void => {
-		const next = updater(state);
+		let next = updater(state);
 		if (next === state) {
 			return;
+		}
+		// Auto-derive the cached queuedMessages list when messages
+		// change so that selectors return a stable reference.
+		if (
+			next.messagesByID !== state.messagesByID ||
+			next.orderedMessageIDs !== state.orderedMessageIDs
+		) {
+			const derived = deriveQueuedMessages(
+				next.orderedMessageIDs,
+				next.messagesByID,
+			);
+			// Preserve the previous reference when the queued set is
+			// unchanged to avoid unnecessary downstream re-renders.
+			const prev = state.queuedMessages;
+			const unchanged =
+				derived.length === prev.length &&
+				derived.every((m, i) => m === prev[i]);
+			next = { ...next, queuedMessages: unchanged ? prev : derived };
 		}
 		state = next;
 		emit();
@@ -313,18 +331,52 @@ export const createChatStore = (): ChatStore => {
 		upsertDurableMessage,
 		applyMessagePart: (part) => applyMessageParts([part]),
 		applyMessageParts,
-		setQueuedMessages: (queuedMessages) => {
-			const nextQueuedMessages = queuedMessages ?? [];
+		replaceQueuedMessages: (messages) => {
 			setState((current) => {
+				// Remove all existing queued messages.
+				const nextMessagesByID = new Map<number, TypesGen.ChatMessage>();
+				for (const [id, msg] of current.messagesByID) {
+					if (!msg.queued) {
+						nextMessagesByID.set(id, msg);
+					}
+				}
+				// Add new queued messages.
+				for (const msg of messages) {
+					nextMessagesByID.set(msg.id, msg);
+				}
+				const nextOrderedMessageIDs = buildOrderedMessageIDs(
+					Array.from(nextMessagesByID.values()),
+				);
 				if (
-					chatQueuedMessagesEqualByID(
-						current.queuedMessages,
-						nextQueuedMessages,
-					)
+					mapsEqualByRef(current.messagesByID, nextMessagesByID) &&
+					arraysEqual(current.orderedMessageIDs, nextOrderedMessageIDs)
 				) {
 					return current;
 				}
-				return { ...current, queuedMessages: nextQueuedMessages };
+				return {
+					...current,
+					messagesByID: nextMessagesByID,
+					orderedMessageIDs: nextOrderedMessageIDs,
+				};
+			});
+		},
+		removeMessage: (id) => {
+			if (!state.messagesByID.has(id)) {
+				return;
+			}
+			setState((current) => {
+				if (!current.messagesByID.has(id)) {
+					return current;
+				}
+				const nextMessagesByID = new Map(current.messagesByID);
+				nextMessagesByID.delete(id);
+				return {
+					...current,
+					messagesByID: nextMessagesByID,
+					orderedMessageIDs: current.orderedMessageIDs.filter(
+						(mid) => mid !== id,
+					),
+				};
 			});
 		},
 		setChatStatus: (status) => {
@@ -418,8 +470,6 @@ interface UseChatStoreOptions {
 	chatID: string | undefined;
 	chatMessages: readonly TypesGen.ChatMessage[] | undefined;
 	chatRecord: TypesGen.Chat | undefined;
-	chatMessagesData: TypesGen.ChatMessagesResponse | undefined;
-	chatQueuedMessages: readonly TypesGen.ChatQueuedMessage[] | undefined;
 	setChatErrorReason: (chatID: string, reason: ChatDetailError) => void;
 	clearChatErrorReason: (chatID: string) => void;
 }
@@ -445,8 +495,6 @@ export const useChatStore = (
 		chatID,
 		chatMessages,
 		chatRecord,
-		chatMessagesData,
-		chatQueuedMessages,
 		setChatErrorReason,
 		clearChatErrorReason,
 	} = options;
@@ -454,14 +502,6 @@ export const useChatStore = (
 	const queryClient = useQueryClient();
 	const storeRef = useRef<ChatStore>(createChatStore());
 	const streamResetFrameRef = useRef<number | null>(null);
-	const queuedMessagesHydratedChatIDRef = useRef<string | null>(null);
-	// Tracks whether the WebSocket has delivered a queue_update for the
-	// current chat. When true, the stream is the authoritative source
-	// and REST re-fetches must not overwrite the store. When false,
-	// REST data is allowed to re-hydrate so stale cached queued
-	// messages are corrected when switching back to a chat whose
-	// queue was drained while the user was away.
-	const wsQueueUpdateReceivedRef = useRef(false);
 	const activeChatIDRef = useRef<string | null>(null);
 	const prevChatIDRef = useRef<string | undefined>(chatID);
 
@@ -514,39 +554,6 @@ export const useChatStore = (
 		});
 	}, [cancelScheduledStreamReset, store]);
 
-	const updateChatQueuedMessages = useCallback(
-		(queuedMessages: readonly TypesGen.ChatQueuedMessage[] | undefined) => {
-			if (!chatID) {
-				return;
-			}
-			const nextQueuedMessages = queuedMessages ?? [];
-			queryClient.setQueryData<
-				InfiniteData<TypesGen.ChatMessagesResponse> | undefined
-			>(chatMessagesKey(chatID), (currentData) => {
-				if (!currentData?.pages?.length) {
-					return currentData;
-				}
-				const firstPage = currentData.pages[0];
-				if (
-					chatQueuedMessagesEqualByID(
-						firstPage.queued_messages,
-						nextQueuedMessages,
-					)
-				) {
-					return currentData;
-				}
-				return {
-					...currentData,
-					pages: [
-						{ ...firstPage, queued_messages: nextQueuedMessages },
-						...currentData.pages.slice(1),
-					],
-				};
-			});
-		},
-		[chatID, queryClient],
-	);
-
 	useEffect(() => {
 		// When the active chat changes, clear stale messages immediately
 		// so the previous chat's messages aren't briefly visible while
@@ -560,8 +567,20 @@ export const useChatStore = (
 		// WebSocket delivered via upsertDurableMessage that haven't
 		// appeared in a REST page yet.
 		if (chatMessages) {
+			const freshIDs = new Set(chatMessages.map((m) => m.id));
 			for (const message of chatMessages) {
 				store.upsertDurableMessage(message);
+			}
+			// Reconcile stale queued messages: the REST response is
+			// the source of truth for which messages are still queued.
+			// Remove any queued messages the store holds that no longer
+			// appear in the REST data (e.g. the queue was drained
+			// server-side while the user viewed a different chat).
+			const { messagesByID } = store.getSnapshot();
+			for (const [id, msg] of messagesByID) {
+				if (msg.queued && !freshIDs.has(id)) {
+					store.removeMessage(id);
+				}
 			}
 		}
 	}, [chatID, chatMessages, store]);
@@ -569,34 +588,6 @@ export const useChatStore = (
 	useEffect(() => {
 		store.setChatStatus(chatRecord?.status ?? null);
 	}, [chatRecord?.status, store]);
-
-	useEffect(() => {
-		queuedMessagesHydratedChatIDRef.current = null;
-		wsQueueUpdateReceivedRef.current = false;
-		store.setQueuedMessages([]);
-		if (!chatID) {
-			return;
-		}
-	}, [chatID, store]);
-
-	useEffect(() => {
-		if (!chatID || !chatMessagesData) {
-			return;
-		}
-		// Allow re-hydration from REST as long as the WebSocket hasn't
-		// delivered a queue_update yet (which would be fresher). This
-		// ensures that when the user navigates back to a chat whose
-		// queued messages were drained server-side while they were
-		// away, the REST refetch corrects the stale cached state.
-		if (
-			queuedMessagesHydratedChatIDRef.current === chatID &&
-			wsQueueUpdateReceivedRef.current
-		) {
-			return;
-		}
-		queuedMessagesHydratedChatIDRef.current = chatID;
-		store.setQueuedMessages(chatQueuedMessages);
-	}, [chatMessagesData, chatID, chatQueuedMessages, store]);
 
 	useEffect(() => {
 		cancelScheduledStreamReset();
@@ -709,17 +700,14 @@ export const useChatStore = (
 						// groups when the two sources race.
 						continue;
 					}
-					case "queue_update":
-						{
-							const eventChatID = asString(streamEvent.chat_id);
-							if (eventChatID && eventChatID !== chatID) {
-								continue;
-							}
+					case "queue_update": {
+						const eventChatID = asString(streamEvent.chat_id);
+						if (eventChatID && eventChatID !== chatID) {
+							continue;
 						}
-						wsQueueUpdateReceivedRef.current = true;
-						store.setQueuedMessages(streamEvent.queued_messages);
-						updateChatQueuedMessages(streamEvent.queued_messages);
+						store.replaceQueuedMessages(streamEvent.queued_messages ?? []);
 						continue;
+					}
 					case "status": {
 						const status = asRecord(streamEvent.status);
 						const nextStatus = asString(status?.status);
@@ -839,7 +827,6 @@ export const useChatStore = (
 		scheduleStreamReset,
 		setChatErrorReason,
 		store,
-		updateChatQueuedMessages,
 		updateSidebarChat,
 	]);
 

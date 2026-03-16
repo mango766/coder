@@ -1263,7 +1263,8 @@ CREATE TABLE chat_messages (
     compressed boolean DEFAULT false NOT NULL,
     created_by uuid,
     content_version smallint NOT NULL,
-    total_cost_micros bigint
+    total_cost_micros bigint,
+    queued boolean DEFAULT false NOT NULL
 );
 
 CREATE SEQUENCE chat_messages_id_seq
@@ -1310,22 +1311,6 @@ CREATE TABLE chat_providers (
 );
 
 COMMENT ON COLUMN chat_providers.api_key_key_id IS 'The ID of the key used to encrypt the provider API key. If this is NULL, the API key is not encrypted';
-
-CREATE TABLE chat_queued_messages (
-    id bigint NOT NULL,
-    chat_id uuid NOT NULL,
-    content jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE SEQUENCE chat_queued_messages_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE chat_queued_messages_id_seq OWNED BY chat_queued_messages.id;
 
 CREATE TABLE chat_usage_limit_config (
     id bigint NOT NULL,
@@ -3189,8 +3174,6 @@ COMMENT ON VIEW workspaces_expanded IS 'Joins in the display name information su
 
 ALTER TABLE ONLY chat_messages ALTER COLUMN id SET DEFAULT nextval('chat_messages_id_seq'::regclass);
 
-ALTER TABLE ONLY chat_queued_messages ALTER COLUMN id SET DEFAULT nextval('chat_queued_messages_id_seq'::regclass);
-
 ALTER TABLE ONLY chat_usage_limit_config ALTER COLUMN id SET DEFAULT nextval('chat_usage_limit_config_id_seq'::regclass);
 
 ALTER TABLE ONLY licenses ALTER COLUMN id SET DEFAULT nextval('licenses_id_seq'::regclass);
@@ -3249,9 +3232,6 @@ ALTER TABLE ONLY chat_providers
 
 ALTER TABLE ONLY chat_providers
     ADD CONSTRAINT chat_providers_provider_key UNIQUE (provider);
-
-ALTER TABLE ONLY chat_queued_messages
-    ADD CONSTRAINT chat_queued_messages_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY chat_usage_limit_config
     ADD CONSTRAINT chat_usage_limit_config_pkey PRIMARY KEY (id);
@@ -3615,6 +3595,8 @@ CREATE INDEX idx_chat_messages_created_at ON chat_messages USING btree (created_
 
 CREATE INDEX idx_chat_messages_owner_spend ON chat_messages USING btree (chat_id, created_at) WHERE (total_cost_micros IS NOT NULL);
 
+CREATE INDEX idx_chat_messages_queued ON chat_messages USING btree (chat_id) WHERE (queued = true);
+
 CREATE INDEX idx_chat_model_configs_enabled ON chat_model_configs USING btree (enabled);
 
 CREATE INDEX idx_chat_model_configs_provider ON chat_model_configs USING btree (provider);
@@ -3624,8 +3606,6 @@ CREATE INDEX idx_chat_model_configs_provider_model ON chat_model_configs USING b
 CREATE UNIQUE INDEX idx_chat_model_configs_single_default ON chat_model_configs USING btree ((1)) WHERE ((is_default = true) AND (deleted = false));
 
 CREATE INDEX idx_chat_providers_enabled ON chat_providers USING btree (enabled);
-
-CREATE INDEX idx_chat_queued_messages_chat_id ON chat_queued_messages USING btree (chat_id);
 
 CREATE INDEX idx_chats_last_model_config_id ON chats USING btree (last_model_config_id);
 
@@ -3919,9 +3899,6 @@ ALTER TABLE ONLY chat_providers
 
 ALTER TABLE ONLY chat_providers
     ADD CONSTRAINT chat_providers_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id);
-
-ALTER TABLE ONLY chat_queued_messages
-    ADD CONSTRAINT chat_queued_messages_chat_id_fkey FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY chats
     ADD CONSTRAINT chats_last_model_config_id_fkey FOREIGN KEY (last_model_config_id) REFERENCES chat_model_configs(id);

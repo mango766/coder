@@ -492,7 +492,7 @@ func TestChatMessage_PreservesProviderExecutedOnToolResults(t *testing.T) {
 	require.True(t, result.Content[1].ProviderExecuted, "tool result should preserve ProviderExecuted")
 }
 
-func TestChatQueuedMessage_ParsesUserContentParts(t *testing.T) {
+func TestChatMessage_ParsesQueuedUserContentParts(t *testing.T) {
 	t.Parallel()
 
 	// Queued messages are always written via MarshalParts (SDK format).
@@ -501,27 +501,65 @@ func TestChatQueuedMessage_ParsesUserContentParts(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	queued := db2sdk.ChatQueuedMessage(database.ChatQueuedMessage{
-		ID:        1,
-		ChatID:    uuid.New(),
-		Content:   rawContent,
-		CreatedAt: time.Now(),
+	result := db2sdk.ChatMessage(database.ChatMessage{
+		ID:     1,
+		ChatID: uuid.New(),
+		Content: pqtype.NullRawMessage{
+			RawMessage: rawContent,
+			Valid:      true,
+		},
+		Role:       "user",
+		Visibility: database.ChatMessageVisibilityBoth,
+		Queued:     true,
+		CreatedAt:  time.Now(),
 	})
 
-	require.Len(t, queued.Content, 1)
-	require.Equal(t, codersdk.ChatMessagePartTypeText, queued.Content[0].Type)
-	require.Equal(t, "queued text", queued.Content[0].Text)
+	require.Len(t, result.Content, 1)
+	require.Equal(t, codersdk.ChatMessagePartTypeText, result.Content[0].Type)
+	require.Equal(t, "queued text", result.Content[0].Text)
 }
 
-func TestChatQueuedMessage_MalformedContent(t *testing.T) {
+func TestChatMessage_FallsBackToTextForLegacyQueuedContent(t *testing.T) {
 	t.Parallel()
 
-	queued := db2sdk.ChatQueuedMessage(database.ChatQueuedMessage{
-		ID:        1,
-		ChatID:    uuid.New(),
-		Content:   json.RawMessage(`{"unexpected":"shape"}`),
-		CreatedAt: time.Now(),
+	t.Run("legacy_string", func(t *testing.T) {
+		t.Parallel()
+
+		result := db2sdk.ChatMessage(database.ChatMessage{
+			ID:     1,
+			ChatID: uuid.New(),
+			Content: pqtype.NullRawMessage{
+				RawMessage: json.RawMessage(`"legacy queued text"`),
+				Valid:      true,
+			},
+			Role:       "user",
+			Visibility: database.ChatMessageVisibilityBoth,
+			Queued:     true,
+			CreatedAt:  time.Now(),
+		})
+
+		require.Len(t, result.Content, 1)
+		require.Equal(t, codersdk.ChatMessagePartTypeText, result.Content[0].Type)
+		require.Equal(t, "legacy queued text", result.Content[0].Text)
 	})
 
-	require.Empty(t, queued.Content)
+	t.Run("malformed_payload", func(t *testing.T) {
+		t.Parallel()
+
+		raw := json.RawMessage(`{"unexpected":"shape"}`)
+		result := db2sdk.ChatMessage(database.ChatMessage{
+			ID:     1,
+			ChatID: uuid.New(),
+			Content: pqtype.NullRawMessage{
+				RawMessage: raw,
+				Valid:      true,
+			},
+			Role:       "user",
+			Visibility: database.ChatMessageVisibilityBoth,
+			Queued:     true,
+			CreatedAt:  time.Now(),
+		})
+
+		require.Empty(t, result.Content)
+	})
 }

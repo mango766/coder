@@ -342,12 +342,11 @@ export const interruptChat = (_queryClient: QueryClient, chatId: string) => ({
 	// watchChats() WebSocket updates the sidebar.
 });
 
-export const deleteChatQueuedMessage = (
+export const deleteChatMessage = (
 	queryClient: QueryClient,
 	chatId: string,
 ) => ({
-	mutationFn: (queuedMessageId: number) =>
-		API.deleteChatQueuedMessage(chatId, queuedMessageId),
+	mutationFn: (messageId: number) => API.deleteChatMessage(chatId, messageId),
 	onSuccess: async () => {
 		await queryClient.invalidateQueries({
 			queryKey: chatKey(chatId),
@@ -360,23 +359,24 @@ export const deleteChatQueuedMessage = (
 	},
 });
 
-export const promoteChatQueuedMessage = (
-	_queryClient: QueryClient,
+export const promoteChatMessage = (
+	queryClient: QueryClient,
 	chatId: string,
 ) => ({
-	mutationFn: (queuedMessageId: number) =>
-		API.promoteChatQueuedMessage(chatId, queuedMessageId),
-	// No onSuccess invalidation needed: the per-chat WebSocket
-	// delivers the promoted message, queue update, and status
-	// change in real-time.
-});
-
-export const chatDiffContentsKey = (chatId: string) =>
-	["chats", chatId, "diff-contents"] as const;
-
-export const chatDiffContents = (chatId: string) => ({
-	queryKey: chatDiffContentsKey(chatId),
-	queryFn: () => API.getChatDiffContents(chatId),
+	mutationFn: (messageId: number) => API.promoteChatMessage(chatId, messageId),
+	onSuccess: () => {
+		// Use targeted invalidation to avoid cascading to unrelated
+		// queries (diff-contents, cost summaries, etc.).
+		void invalidateChatListQueries(queryClient);
+		void queryClient.invalidateQueries({
+			queryKey: chatKey(chatId),
+			exact: true,
+		});
+		void queryClient.invalidateQueries({
+			queryKey: chatMessagesKey(chatId),
+			exact: true,
+		});
+	},
 });
 
 const chatSystemPromptKey = ["chat-system-prompt"] as const;
@@ -602,4 +602,12 @@ export const deleteChatUsageLimitGroupOverride = (
 			queryKey: chatUsageLimitConfigKey,
 		});
 	},
+});
+
+export const chatDiffContentsKey = (chatId: string) =>
+	["chats", chatId, "diff-contents"] as const;
+
+export const chatDiffContents = (chatId: string) => ({
+	queryKey: chatDiffContentsKey(chatId),
+	queryFn: () => API.getChatDiffContents(chatId),
 });

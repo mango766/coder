@@ -1,6 +1,6 @@
 import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { watchChat } from "api/api";
-import { chatMessagesKey, chatsKey } from "api/queries/chats";
+import { chatsKey } from "api/queries/chats";
 
 // The infinite query key used by useInfiniteQuery(infiniteChats())
 // is [...chatsKey, undefined] = ["chats", undefined].
@@ -202,17 +202,20 @@ const makeMessage = (
 	created_at: "2025-01-01T00:00:00.000Z",
 	role,
 	content: [{ type: "text", text }],
+	queued: false,
 });
 
 const makeQueuedMessage = (
 	chatID: string,
 	id: number,
 	text: string,
-): TypesGen.ChatQueuedMessage => ({
+): TypesGen.ChatMessage => ({
 	id,
 	chat_id: chatID,
 	created_at: "2025-01-01T00:00:00.000Z",
+	role: "user",
 	content: [{ type: "text", text }],
+	queued: true,
 });
 
 const immediateAnimationFrame = (): void => {
@@ -250,12 +253,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [existingMessage],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [existingMessage],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -331,12 +328,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [existingMessage],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [existingMessage],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -406,12 +397,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [existingMessage],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [existingMessage],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -500,12 +485,6 @@ describe("useChatStore", () => {
 				chatID,
 				chatMessages: [existingMessage],
 				chatRecord: makeChat(chatID),
-				chatMessagesData: {
-					messages: [existingMessage],
-					queued_messages: [],
-					has_more: false,
-				},
-				chatQueuedMessages: [],
 				setChatErrorReason,
 				clearChatErrorReason,
 			});
@@ -574,12 +553,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [existingMessage],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [existingMessage],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -649,12 +622,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [existingMessage],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [existingMessage],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -735,14 +702,8 @@ describe("useChatStore", () => {
 		const clearChatErrorReason = vi.fn();
 		const initialOptions = {
 			chatID,
-			chatMessages: [existingMessage],
+			chatMessages: [existingMessage, queuedMessage],
 			chatRecord: makeChat(chatID),
-			chatMessagesData: {
-				messages: [existingMessage],
-				queued_messages: [queuedMessage],
-				has_more: false,
-			},
-			chatQueuedMessages: [queuedMessage],
 			setChatErrorReason,
 			clearChatErrorReason,
 		};
@@ -761,7 +722,7 @@ describe("useChatStore", () => {
 		);
 
 		await waitFor(() => {
-			expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			expect(watchChat).toHaveBeenCalledWith(chatID, 10);
 		});
 		expect(result.current.queuedMessages.map((message) => message.id)).toEqual([
 			queuedMessage.id,
@@ -781,12 +742,6 @@ describe("useChatStore", () => {
 
 		rerender({
 			...initialOptions,
-			chatMessagesData: {
-				messages: [existingMessage],
-				queued_messages: [queuedMessage],
-				has_more: false,
-			},
-			chatQueuedMessages: [queuedMessage],
 		});
 
 		await waitFor(() => {
@@ -813,14 +768,8 @@ describe("useChatStore", () => {
 		// server-side while the user was viewing a different chat.
 		const staleOptions = {
 			chatID,
-			chatMessages: [existingMessage],
+			chatMessages: [existingMessage, queuedMessage],
 			chatRecord: makeChat(chatID),
-			chatMessagesData: {
-				messages: [existingMessage],
-				queued_messages: [queuedMessage],
-				has_more: false,
-			},
-			chatQueuedMessages: [queuedMessage],
 			setChatErrorReason,
 			clearChatErrorReason,
 		};
@@ -839,7 +788,7 @@ describe("useChatStore", () => {
 		);
 
 		await waitFor(() => {
-			expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			expect(watchChat).toHaveBeenCalledWith(chatID, 10);
 		});
 		// Initially shows the stale queued message from cache.
 		expect(result.current.queuedMessages.map((m) => m.id)).toEqual([
@@ -847,67 +796,38 @@ describe("useChatStore", () => {
 		]);
 
 		// Simulate the REST query refetching and returning fresh
-		// data with an empty queue (no queue_update from WS yet).
+		// data with an empty queue.
 		rerender({
 			...staleOptions,
-			chatMessagesData: {
-				messages: [existingMessage],
-				queued_messages: [],
-				has_more: false,
-			},
-			chatQueuedMessages: [],
+			chatMessages: [existingMessage],
 		});
 
-		// The store should accept the fresh REST data because the
-		// WebSocket hasn't sent a queue_update yet.
+		// The store should accept the fresh REST data.
 		await waitFor(() => {
 			expect(result.current.queuedMessages).toEqual([]);
 		});
 	});
-
-	it("writes queue_update snapshots into the chat query cache", async () => {
+	it("updates store queuedMessages on queue_update event", async () => {
 		const chatID = "chat-1";
 		const existingMessage = makeMessage(chatID, 1, "user", "hello");
 		const queuedMessage = makeQueuedMessage(chatID, 10, "queued");
 		const mockSocket = createMockSocket();
 		vi.mocked(watchChat).mockReturnValue(mockSocket as never);
 
-		const queryClient = new QueryClient({
-			defaultOptions: {
-				queries: {
-					retry: false,
-					gcTime: Number.POSITIVE_INFINITY,
-					refetchOnWindowFocus: false,
-					networkMode: "offlineFirst",
-				},
-			},
-		});
-		const initialChatMessagesData: TypesGen.ChatMessagesResponse = {
-			messages: [existingMessage],
-			queued_messages: [queuedMessage],
-			has_more: false,
-		};
-		// The cache is InfiniteData<ChatMessagesResponse> after the
-		// migration to useInfiniteQuery for chat messages.
-		queryClient.setQueryData(chatMessagesKey(chatID), {
-			pages: [initialChatMessagesData],
-			pageParams: [undefined],
-		});
-
+		const queryClient = createTestQueryClient();
 		const wrapper = ({ children }: PropsWithChildren) => (
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const setChatErrorReason = vi.fn();
 		const clearChatErrorReason = vi.fn();
 
+		const chatMessagesList = [existingMessage, queuedMessage];
 		const { result } = renderHook(
 			() => {
 				const { store } = useChatStore({
 					chatID,
-					chatMessages: [existingMessage],
+					chatMessages: chatMessagesList,
 					chatRecord: makeChat(chatID),
-					chatMessagesData: initialChatMessagesData,
-					chatQueuedMessages: [queuedMessage],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -919,8 +839,11 @@ describe("useChatStore", () => {
 		);
 
 		await waitFor(() => {
-			expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			expect(watchChat).toHaveBeenCalledWith(chatID, 10);
 		});
+
+		// Initially queued message is present in the store.
+		expect(result.current.queuedMessages.map((m) => m.id)).toEqual([10]);
 
 		act(() => {
 			mockSocket.emitData({
@@ -933,13 +856,7 @@ describe("useChatStore", () => {
 		await waitFor(() => {
 			expect(result.current.queuedMessages).toEqual([]);
 		});
-		const cachedData = queryClient.getQueryData<{
-			pages: TypesGen.ChatMessagesResponse[];
-			pageParams: unknown[];
-		}>(chatMessagesKey(chatID));
-		expect(cachedData?.pages[0]?.queued_messages).toEqual([]);
 	});
-
 	it("closes old WebSocket and resets state when chatID changes", async () => {
 		immediateAnimationFrame();
 
@@ -969,12 +886,6 @@ describe("useChatStore", () => {
 			chatID: chatID1,
 			chatMessages: [msg1] as TypesGen.ChatMessage[],
 			chatRecord: makeChat(chatID1),
-			chatMessagesData: {
-				messages: [msg1],
-				queued_messages: [] as TypesGen.ChatQueuedMessage[],
-				has_more: false,
-			},
-			chatQueuedMessages: [] as TypesGen.ChatQueuedMessage[],
 			setChatErrorReason,
 			clearChatErrorReason,
 		};
@@ -1018,11 +929,6 @@ describe("useChatStore", () => {
 			chatID: chatID2,
 			chatMessages: [msg2],
 			chatRecord: makeChat(chatID2),
-			chatMessagesData: {
-				messages: [msg2],
-				queued_messages: [],
-				has_more: false,
-			},
 		});
 
 		await waitFor(() => {
@@ -1054,14 +960,8 @@ describe("useChatStore", () => {
 			() => {
 				const { store } = useChatStore({
 					chatID,
-					chatMessages: [existingMessage],
+					chatMessages: [existingMessage, queuedMessage],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [existingMessage],
-						queued_messages: [queuedMessage],
-						has_more: false,
-					},
-					chatQueuedMessages: [queuedMessage],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1073,7 +973,7 @@ describe("useChatStore", () => {
 		);
 
 		await waitFor(() => {
-			expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			expect(watchChat).toHaveBeenCalledWith(chatID, 10);
 		});
 
 		act(() => {
@@ -1090,7 +990,6 @@ describe("useChatStore", () => {
 			).toEqual([queuedMessage.id]);
 		});
 	});
-
 	it("filters message events with mismatched chat_id", async () => {
 		immediateAnimationFrame();
 
@@ -1112,12 +1011,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [existingMessage],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [existingMessage],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1214,12 +1107,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [existingMessage],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [existingMessage],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1310,12 +1197,6 @@ describe("useChatStore", () => {
 			chatID: chatID1,
 			chatMessages: [msg1] as TypesGen.ChatMessage[],
 			chatRecord: makeChat(chatID1),
-			chatMessagesData: {
-				messages: [msg1],
-				queued_messages: [] as TypesGen.ChatQueuedMessage[],
-				has_more: false,
-			},
-			chatQueuedMessages: [] as TypesGen.ChatQueuedMessage[],
 			setChatErrorReason,
 			clearChatErrorReason,
 		};
@@ -1359,11 +1240,6 @@ describe("useChatStore", () => {
 			chatID: chatID2,
 			chatMessages: [msg2],
 			chatRecord: makeChat(chatID2),
-			chatMessagesData: {
-				messages: [msg2],
-				queued_messages: [],
-				has_more: false,
-			},
 		});
 
 		await waitFor(() => {
@@ -1399,14 +1275,8 @@ describe("useChatStore", () => {
 
 		const initialOptions = {
 			chatID: chatID1,
-			chatMessages: [msg1] as TypesGen.ChatMessage[],
+			chatMessages: [msg1, queuedMsg] as TypesGen.ChatMessage[],
 			chatRecord: makeChat(chatID1),
-			chatMessagesData: {
-				messages: [msg1],
-				queued_messages: [queuedMsg],
-				has_more: false,
-			},
-			chatQueuedMessages: [queuedMsg],
 			setChatErrorReason,
 			clearChatErrorReason,
 		};
@@ -1422,7 +1292,7 @@ describe("useChatStore", () => {
 		);
 
 		await waitFor(() => {
-			expect(watchChat).toHaveBeenCalledWith(chatID1, 1);
+			expect(watchChat).toHaveBeenCalledWith(chatID1, 10);
 		});
 
 		// Verify queued messages from chat-1 are present.
@@ -1430,19 +1300,12 @@ describe("useChatStore", () => {
 			queuedMsg.id,
 		]);
 
-		// Switch to chat-2 with no messages and no queued messages
-		// (simulating query not yet resolved for the new chat).
+		// Switch to chat-2 with no messages and no queued messages		// (simulating query not yet resolved for the new chat).
 		rerender({
 			...initialOptions,
 			chatID: chatID2,
 			chatMessages: [],
 			chatRecord: makeChat(chatID2),
-			chatMessagesData: {
-				messages: [],
-				queued_messages: [],
-				has_more: false,
-			},
-			chatQueuedMessages: [],
 		});
 
 		// After the switch, queued messages from chat-1 should NOT be
@@ -1473,12 +1336,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1543,12 +1400,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1604,12 +1455,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1657,12 +1502,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1718,12 +1557,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1793,12 +1626,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1855,12 +1682,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1927,12 +1748,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -1993,12 +1808,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason: vi.fn(),
 					clearChatErrorReason: vi.fn(),
 				}),
@@ -2046,12 +1855,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [msg],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [msg],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason: vi.fn(),
 					clearChatErrorReason: vi.fn(),
 				}),
@@ -2111,12 +1914,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [existingMessage],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [existingMessage],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -2235,12 +2032,6 @@ describe("useChatStore", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: makeChat(chatID),
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -2304,12 +2095,6 @@ describe("updateSidebarChat via stream events", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: initialChat,
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -2368,12 +2153,6 @@ describe("updateSidebarChat via stream events", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: initialChat,
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -2441,12 +2220,6 @@ describe("updateSidebarChat via stream events", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: initialChat,
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -2507,12 +2280,6 @@ describe("updateSidebarChat via stream events", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: activeChat,
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -2580,12 +2347,6 @@ describe("updateSidebarChat via stream events", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: initialChat,
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -2651,12 +2412,6 @@ describe("updateSidebarChat via stream events", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: initialChat,
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});
@@ -2717,12 +2472,6 @@ describe("updateSidebarChat via stream events", () => {
 					chatID,
 					chatMessages: [],
 					chatRecord: initialChat,
-					chatMessagesData: {
-						messages: [],
-						queued_messages: [],
-						has_more: false,
-					},
-					chatQueuedMessages: [],
 					setChatErrorReason,
 					clearChatErrorReason,
 				});

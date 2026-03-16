@@ -61,6 +61,7 @@ type ChatMessage struct {
 	Role          ChatMessageRole   `json:"role"`
 	Content       []ChatMessagePart `json:"content,omitempty"`
 	Usage         *ChatMessageUsage `json:"usage,omitempty"`
+	Queued        bool              `json:"queued"`
 }
 
 // ChatMessageUsage contains token usage information for a chat message.
@@ -262,9 +263,7 @@ type EditChatMessageRequest struct {
 
 // CreateChatMessageResponse is the response from adding a message to a chat.
 type CreateChatMessageResponse struct {
-	Message       *ChatMessage       `json:"message,omitempty"`
-	QueuedMessage *ChatQueuedMessage `json:"queued_message,omitempty"`
-	Queued        bool               `json:"queued"`
+	Message ChatMessage `json:"message"`
 }
 
 // UploadChatFileResponse is the response from uploading a chat file.
@@ -272,11 +271,10 @@ type UploadChatFileResponse struct {
 	ID uuid.UUID `json:"id" format:"uuid"`
 }
 
-// ChatMessagesResponse contains the messages and queued messages for a chat.
+// ChatMessagesResponse contains the messages for a chat.
 type ChatMessagesResponse struct {
-	Messages       []ChatMessage       `json:"messages"`
-	QueuedMessages []ChatQueuedMessage `json:"queued_messages"`
-	HasMore        bool                `json:"has_more"`
+	Messages []ChatMessage `json:"messages"`
+	HasMore  bool          `json:"has_more"`
 }
 
 // ChatModelProviderUnavailableReason explains why a provider cannot be used.
@@ -648,17 +646,14 @@ const (
 	ChatStreamEventTypeMessage     ChatStreamEventType = "message"
 	ChatStreamEventTypeStatus      ChatStreamEventType = "status"
 	ChatStreamEventTypeError       ChatStreamEventType = "error"
+	// queue_update events carry the complete set of currently queued
+	// messages, replacing any previous state. This differs from regular
+	// message events which are additive. Retaining this event type
+	// avoids the need for the frontend to reconcile individual
+	// add/remove operations on queued messages.
 	ChatStreamEventTypeQueueUpdate ChatStreamEventType = "queue_update"
 	ChatStreamEventTypeRetry       ChatStreamEventType = "retry"
 )
-
-// ChatQueuedMessage represents a queued message waiting to be processed.
-type ChatQueuedMessage struct {
-	ID        int64             `json:"id"`
-	ChatID    uuid.UUID         `json:"chat_id" format:"uuid"`
-	Content   []ChatMessagePart `json:"content"`
-	CreatedAt time.Time         `json:"created_at" format:"date-time"`
-}
 
 // ChatStreamMessagePart is a streamed message part update.
 type ChatStreamMessagePart struct {
@@ -698,7 +693,7 @@ type ChatStreamEvent struct {
 	Status         *ChatStreamStatus      `json:"status,omitempty"`
 	Error          *ChatStreamError       `json:"error,omitempty"`
 	Retry          *ChatStreamRetry       `json:"retry,omitempty"`
-	QueuedMessages []ChatQueuedMessage    `json:"queued_messages,omitempty"`
+	QueuedMessages []ChatMessage          `json:"queued_messages,omitempty"`
 }
 
 type chatStreamEnvelope struct {

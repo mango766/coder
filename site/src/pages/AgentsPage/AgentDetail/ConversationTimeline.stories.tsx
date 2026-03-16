@@ -18,6 +18,7 @@ const buildSections = (messages: TypesGen.ChatMessage[]) =>
 const baseMessage = {
 	chat_id: "story-chat",
 	created_at: "2026-03-10T00:00:00.000Z",
+	queued: false,
 } as const;
 
 const defaultArgs: Omit<

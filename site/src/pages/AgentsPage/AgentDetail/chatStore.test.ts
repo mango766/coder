@@ -20,19 +20,22 @@ const makeMessage = (
 		created_at: `2025-01-01T00:00:0${Math.max(Math.abs(id), 0)}.000Z`,
 		role,
 		content: [{ type: "text", text }],
+		queued: false,
 	}) as TypesGen.ChatMessage;
 
 const makeQueuedMessage = (
 	id: number,
 	text: string,
 	chatID = "chat-1",
-): TypesGen.ChatQueuedMessage =>
+): TypesGen.ChatMessage =>
 	({
 		id,
 		chat_id: chatID,
 		created_at: "2025-01-01T00:00:00Z",
+		role: "user",
 		content: [{ type: "text", text }],
-	}) as TypesGen.ChatQueuedMessage;
+		queued: true,
+	}) as TypesGen.ChatMessage;
 
 // ---------------------------------------------------------------------------
 // replaceMessages
@@ -303,42 +306,93 @@ describe("setSubagentStatusOverride", () => {
 });
 
 // ---------------------------------------------------------------------------
-// setQueuedMessages
+// replaceQueuedMessages / removeMessage
 // ---------------------------------------------------------------------------
 
-describe("setQueuedMessages", () => {
-	it("stores queued messages", () => {
+describe("replaceQueuedMessages", () => {
+	it("adds queued messages to the store", () => {
 		const store = createChatStore();
 		const qm = makeQueuedMessage(10, "queued");
 
-		store.setQueuedMessages([qm]);
+		store.replaceQueuedMessages([qm]);
 
 		expect(store.getSnapshot().queuedMessages).toEqual([qm]);
+		expect(store.getSnapshot().messagesByID.get(10)).toBe(qm);
 	});
 
-	it("treats undefined as empty array", () => {
+	it("replaces existing queued messages with new ones", () => {
 		const store = createChatStore();
-		store.setQueuedMessages([makeQueuedMessage(1, "q")]);
+		store.replaceQueuedMessages([makeQueuedMessage(1, "old")]);
 
-		store.setQueuedMessages(undefined);
+		const newQm = makeQueuedMessage(2, "new");
+		store.replaceQueuedMessages([newQm]);
 
+		expect(store.getSnapshot().queuedMessages).toEqual([newQm]);
+		expect(store.getSnapshot().messagesByID.has(1)).toBe(false);
+	});
+
+	it("preserves non-queued messages", () => {
+		const store = createChatStore();
+		const regular = makeMessage(1, "user", "hello");
+		store.replaceMessages([regular]);
+		store.replaceQueuedMessages([makeQueuedMessage(10, "queued")]);
+
+		store.replaceQueuedMessages([]);
+
+		expect(store.getSnapshot().messagesByID.get(1)).toBe(regular);
 		expect(store.getSnapshot().queuedMessages).toEqual([]);
 	});
 
-	it("does not notify when queued message IDs are unchanged", () => {
+	it("does not notify when nothing changes", () => {
 		const store = createChatStore();
 		const qm = makeQueuedMessage(10, "queued");
-		store.setQueuedMessages([qm]);
+		store.replaceQueuedMessages([qm]);
 
 		let notified = false;
 		store.subscribe(() => {
 			notified = true;
 		});
 
-		// Different object reference, same ID.
-		store.setQueuedMessages([{ ...qm }]);
+		// Same message object.
+		store.replaceQueuedMessages([qm]);
 
 		expect(notified).toBe(false);
+	});
+});
+
+describe("removeMessage", () => {
+	it("removes a message from the store", () => {
+		const store = createChatStore();
+		const msg = makeMessage(1, "user", "hello");
+		store.replaceMessages([msg]);
+
+		store.removeMessage(1);
+
+		expect(store.getSnapshot().messagesByID.has(1)).toBe(false);
+		expect(store.getSnapshot().orderedMessageIDs).not.toContain(1);
+	});
+
+	it("is a no-op when the message does not exist", () => {
+		const store = createChatStore();
+
+		let notified = false;
+		store.subscribe(() => {
+			notified = true;
+		});
+
+		store.removeMessage(999);
+
+		expect(notified).toBe(false);
+	});
+
+	it("updates queuedMessages when a queued message is removed", () => {
+		const store = createChatStore();
+		const qm = makeQueuedMessage(10, "queued");
+		store.replaceQueuedMessages([qm]);
+
+		store.removeMessage(10);
+
+		expect(store.getSnapshot().queuedMessages).toEqual([]);
 	});
 });
 
@@ -446,13 +500,15 @@ describe("resetTransientState", () => {
 	it("preserves messages and queued messages", () => {
 		const store = createChatStore();
 		store.replaceMessages([makeMessage(1, "user", "hello")]);
-		store.setQueuedMessages([makeQueuedMessage(10, "queued")]);
+		store.replaceQueuedMessages([makeQueuedMessage(10, "queued")]);
 		store.setStreamError("oops");
 
 		store.resetTransientState();
 
 		const state = store.getSnapshot();
-		expect(state.messagesByID.size).toBe(1);
+		// Regular message is preserved.
+		expect(state.messagesByID.has(1)).toBe(true);
+		// Queued message is also preserved.
 		expect(state.queuedMessages).toHaveLength(1);
 	});
 

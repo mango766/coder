@@ -14,12 +14,12 @@ import {
 	chatsKey,
 	createChat,
 	createChatMessage,
-	deleteChatQueuedMessage,
+	deleteChatMessage,
 	editChatMessage,
 	infiniteChats,
 	interruptChat,
 	invalidateChatListQueries,
-	promoteChatQueuedMessage,
+	promoteChatMessage,
 	unarchiveChat,
 } from "./chats";
 
@@ -27,14 +27,15 @@ vi.mock("api/api", () => ({
 	API: {
 		updateChat: vi.fn(),
 		createChat: vi.fn(),
-		deleteChatQueuedMessage: vi.fn(),
+		deleteChatMessage: vi.fn(),
+		unarchiveChat: vi.fn(),
 		getChats: vi.fn(),
 		getChatCostSummary: vi.fn(),
 		getChatCostUsers: vi.fn(),
 		createChatMessage: vi.fn(),
 		editChatMessage: vi.fn(),
 		interruptChat: vi.fn(),
-		promoteChatQueuedMessage: vi.fn(),
+		promoteChatMessage: vi.fn(),
 	},
 }));
 
@@ -596,23 +597,24 @@ describe("mutation invalidation scope", () => {
 		}
 	});
 
-	it("promoteChatQueuedMessage does not invalidate unrelated queries", async () => {
+	it("promoteChatMessage does not invalidate unrelated queries", async () => {
 		const queryClient = createTestQueryClient();
 		const chatId = "chat-1";
 		seedAllActiveQueries(queryClient, chatId);
 
-		const mutation = promoteChatQueuedMessage(queryClient, chatId);
-		expect(mutation).not.toHaveProperty("onSuccess");
+		const mutation = promoteChatMessage(queryClient, chatId);
+		mutation.onSuccess();
+
+		await new Promise((r) => setTimeout(r, 0));
 
 		for (const { label, key } of unrelatedKeys(chatId)) {
 			const state = queryClient.getQueryState(key);
 			expect(
 				state?.isInvalidated,
-				`${label} should NOT be invalidated by promoteChatQueuedMessage`,
+				`${label} should NOT be invalidated by promoteChatMessage`,
 			).not.toBe(true);
 		}
 	});
-
 	it("createChat invalidates only sidebar queries on success", async () => {
 		const queryClient = createTestQueryClient();
 		const chatId = "chat-1";
@@ -651,12 +653,12 @@ describe("mutation invalidation scope", () => {
 		).not.toBe(true);
 	});
 
-	it("deleteChatQueuedMessage invalidates only chat detail and messages", async () => {
+	it("deleteChatMessage invalidates only chat detail and messages", async () => {
 		const queryClient = createTestQueryClient();
 		const chatId = "chat-1";
 		seedAllActiveQueries(queryClient, chatId);
 
-		const mutation = deleteChatQueuedMessage(queryClient, chatId);
+		const mutation = deleteChatMessage(queryClient, chatId);
 		await mutation.onSuccess();
 
 		// These two should be invalidated (exact match).
@@ -673,7 +675,7 @@ describe("mutation invalidation scope", () => {
 		for (const { label, key } of unrelatedKeys(chatId)) {
 			expect(
 				queryClient.getQueryState(key)?.isInvalidated,
-				`${label} should NOT be invalidated by deleteChatQueuedMessage`,
+				`${label} should NOT be invalidated by deleteChatMessage`,
 			).not.toBe(true);
 		}
 

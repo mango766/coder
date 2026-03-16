@@ -7,10 +7,10 @@ import {
 	chatModels,
 	chats,
 	createChatMessage,
-	deleteChatQueuedMessage,
+	deleteChatMessage,
 	editChatMessage,
 	interruptChat,
-	promoteChatQueuedMessage,
+	promoteChatMessage,
 } from "api/queries/chats";
 import { deploymentSSHConfig } from "api/queries/deployment";
 import { workspaceById, workspaceByIdKey } from "api/queries/workspaces";
@@ -360,20 +360,6 @@ const AgentDetail: FC = () => {
 		return all;
 	}, [chatMessagesQuery.data]);
 
-	// Queued messages are only in the first page (most recent).
-	const chatQueuedMessages = chatMessagesQuery.data?.pages[0]?.queued_messages;
-
-	// Build a synthetic ChatMessagesResponse from the flattened
-	// data for backward compat with useChatStore.
-	const chatMessagesData: TypesGen.ChatMessagesResponse | undefined =
-		useMemo(() => {
-			if (!chatMessagesList) return undefined;
-			return {
-				messages: chatMessagesList,
-				queued_messages: chatQueuedMessages ?? [],
-				has_more: chatMessagesQuery.data?.pages.at(-1)?.has_more ?? false,
-			};
-		}, [chatMessagesList, chatQueuedMessages, chatMessagesQuery.data]);
 	const isArchived = chatRecord?.archived ?? false;
 	const chatLastModelConfigID = chatRecord?.last_model_config_id;
 
@@ -422,18 +408,16 @@ const AgentDetail: FC = () => {
 		interruptChat(queryClient, agentId ?? ""),
 	);
 	const deleteQueuedMutation = useMutation(
-		deleteChatQueuedMessage(queryClient, agentId ?? ""),
+		deleteChatMessage(queryClient, agentId ?? ""),
 	);
 	const promoteQueuedMutation = useMutation(
-		promoteChatQueuedMessage(queryClient, agentId ?? ""),
+		promoteChatMessage(queryClient, agentId ?? ""),
 	);
 
 	const { store, clearStreamError } = useChatStore({
 		chatID: agentId,
 		chatMessages: chatMessagesList,
 		chatRecord,
-		chatMessagesData,
-		chatQueuedMessages,
 		setChatErrorReason,
 		clearChatErrorReason,
 	});
@@ -638,12 +622,7 @@ const AgentDetail: FC = () => {
 		store.clearStreamState();
 		try {
 			const response = await sendMutation.mutateAsync(request);
-			// When the server accepts the message immediately (not
-			// queued), insert it into the store so it appears in the
-			// timeline without waiting for the SSE stream.
-			if (!response.queued && response.message) {
-				store.upsertDurableMessage(response.message);
-			}
+			store.upsertDurableMessage(response.message);
 			if (typeof window !== "undefined") {
 				if (selectedModelConfigID) {
 					localStorage.setItem(
@@ -669,14 +648,14 @@ const AgentDetail: FC = () => {
 
 	const handleDeleteQueuedMessage = useCallback(
 		async (id: number) => {
-			const previousQueuedMessages = store.getSnapshot().queuedMessages;
-			store.setQueuedMessages(
-				previousQueuedMessages.filter((message) => message.id !== id),
-			);
+			const previousMessage = store.getSnapshot().messagesByID.get(id);
+			store.removeMessage(id);
 			try {
 				await deleteQueuedMutation.mutateAsync(id);
 			} catch (error) {
-				store.setQueuedMessages(previousQueuedMessages);
+				if (previousMessage) {
+					store.upsertDurableMessage(previousMessage);
+				}
 				throw error;
 			}
 		},
@@ -686,11 +665,9 @@ const AgentDetail: FC = () => {
 	const handlePromoteQueuedMessage = useCallback(
 		async (id: number) => {
 			const previousSnapshot = store.getSnapshot();
-			const previousQueuedMessages = previousSnapshot.queuedMessages;
+			const previousMessage = previousSnapshot.messagesByID.get(id);
 			const previousChatStatus = previousSnapshot.chatStatus;
-			store.setQueuedMessages(
-				previousQueuedMessages.filter((message) => message.id !== id),
-			);
+			store.removeMessage(id);
 			store.clearStreamState();
 			if (agentId) {
 				clearChatErrorReason(agentId);
@@ -700,7 +677,9 @@ const AgentDetail: FC = () => {
 			try {
 				await promoteQueuedMutation.mutateAsync(id);
 			} catch (error) {
-				store.setQueuedMessages(previousQueuedMessages);
+				if (previousMessage) {
+					store.upsertDurableMessage(previousMessage);
+				}
 				store.setChatStatus(previousChatStatus);
 				handleUsageLimitError(error);
 				throw error;

@@ -326,6 +326,9 @@ var (
 	ErrEditedMessageNotFound = xerrors.New("edited message not found")
 	// ErrEditedMessageNotUser indicates a non-user message edit attempt.
 	ErrEditedMessageNotUser = xerrors.New("only user messages can be edited")
+	// ErrQueuedMessageNotFound indicates the queued message does
+	// not exist or has already been promoted.
+	ErrQueuedMessageNotFound = xerrors.New("queued message not found")
 
 	// errChatTakenByOtherWorker is a sentinel used inside the
 	// processChat cleanup transaction to signal that another
@@ -392,10 +395,9 @@ type SendMessageOptions struct {
 
 // SendMessageResult contains the outcome of user message processing.
 type SendMessageResult struct {
-	Queued        bool
-	QueuedMessage *database.ChatQueuedMessage
-	Message       database.ChatMessage
-	Chat          database.Chat
+	Queued  bool
+	Message database.ChatMessage
+	Chat    database.Chat
 }
 
 // EditMessageOptions controls in-place user message edits.
@@ -415,7 +417,6 @@ type EditMessageResult struct {
 // PromoteQueuedOptions controls queued-message promotion.
 type PromoteQueuedOptions struct {
 	ChatID          uuid.UUID
-	CreatedBy       uuid.UUID
 	QueuedMessageID int64
 	ModelConfigID   *uuid.UUID
 }
@@ -568,7 +569,7 @@ func (p *Server) SendMessage(
 
 	var (
 		result            SendMessageResult
-		queuedMessagesSDK []codersdk.ChatQueuedMessage
+		queuedMessagesSDK []codersdk.ChatMessage
 	)
 
 	txErr := p.db.InTx(func(tx database.Store) error {
@@ -587,7 +588,7 @@ func (p *Server) SendMessage(
 			modelConfigID = *opts.ModelConfigID
 		}
 
-		existingQueued, err := tx.GetChatQueuedMessages(ctx, opts.ChatID)
+		existingQueued, err := tx.GetQueuedChatMessages(ctx, opts.ChatID)
 		if err != nil {
 			return xerrors.Errorf("get queued messages: %w", err)
 		}
@@ -607,23 +608,24 @@ func (p *Server) SendMessage(
 				return ErrMessageQueueFull
 			}
 
-			queued, err := tx.InsertChatQueuedMessage(ctx, database.InsertChatQueuedMessageParams{
-				ChatID:  opts.ChatID,
-				Content: content.RawMessage,
+			queued, err := tx.InsertQueuedChatMessage(ctx, database.InsertQueuedChatMessageParams{
+				ChatID:    opts.ChatID,
+				Content:   content.RawMessage,
+				CreatedBy: uuid.NullUUID{UUID: opts.CreatedBy, Valid: opts.CreatedBy != uuid.Nil},
 			})
 			if err != nil {
 				return xerrors.Errorf("insert queued message: %w", err)
 			}
 
-			queuedMessages, err := tx.GetChatQueuedMessages(ctx, opts.ChatID)
+			queuedMessages, err := tx.GetQueuedChatMessages(ctx, opts.ChatID)
 			if err != nil {
 				return xerrors.Errorf("get queued messages: %w", err)
 			}
 
 			result.Queued = true
-			result.QueuedMessage = &queued
+			result.Message = queued
 			result.Chat = lockedChat
-			queuedMessagesSDK = db2sdk.ChatQueuedMessages(queuedMessages)
+			queuedMessagesSDK = convertQueuedMessagesToSDK(queuedMessages)
 			return nil
 		}
 
@@ -776,7 +778,7 @@ func (p *Server) EditMessage(
 			return xerrors.Errorf("delete later chat messages: %w", err)
 		}
 
-		err = tx.DeleteAllChatQueuedMessages(ctx, opts.ChatID)
+		err = tx.DeleteAllQueuedChatMessages(ctx, opts.ChatID)
 		if err != nil {
 			return xerrors.Errorf("delete queued messages: %w", err)
 		}
@@ -804,7 +806,7 @@ func (p *Server) EditMessage(
 	p.publishEditedMessage(opts.ChatID, result.Message)
 	p.publishEvent(opts.ChatID, codersdk.ChatStreamEvent{
 		Type:           codersdk.ChatStreamEventTypeQueueUpdate,
-		QueuedMessages: []codersdk.ChatQueuedMessage{},
+		QueuedMessages: []codersdk.ChatMessage{},
 	})
 	p.publishChatStreamNotify(opts.ChatID, coderdpubsub.ChatStreamNotifyMessage{
 		QueueUpdate: true,
@@ -854,7 +856,7 @@ func (p *Server) DeleteQueued(
 		return xerrors.New("chat_id is required")
 	}
 
-	var queuedMessages []database.ChatQueuedMessage
+	var queuedMessages []database.ChatMessage
 	var queueLoadedOK bool
 
 	txErr := p.db.InTx(func(tx database.Store) error {
@@ -864,16 +866,19 @@ func (p *Server) DeleteQueued(
 			return xerrors.Errorf("lock chat: %w", err)
 		}
 
-		err := tx.DeleteChatQueuedMessage(ctx, database.DeleteChatQueuedMessageParams{
+		rowsAffected, err := tx.DeleteQueuedChatMessage(ctx, database.DeleteQueuedChatMessageParams{
 			ID:     queuedMessageID,
 			ChatID: chatID,
 		})
 		if err != nil {
 			return xerrors.Errorf("delete queued message: %w", err)
 		}
+		if rowsAffected == 0 {
+			return ErrQueuedMessageNotFound
+		}
 
 		var err2 error
-		queuedMessages, err2 = tx.GetChatQueuedMessages(ctx, chatID)
+		queuedMessages, err2 = tx.GetQueuedChatMessages(ctx, chatID)
 		if err2 != nil {
 			p.logger.Warn(ctx, "failed to load queued messages after delete",
 				slog.F("chat_id", chatID),
@@ -894,7 +899,7 @@ func (p *Server) DeleteQueued(
 	if queueLoadedOK {
 		p.publishEvent(chatID, codersdk.ChatStreamEvent{
 			Type:           codersdk.ChatStreamEventTypeQueueUpdate,
-			QueuedMessages: db2sdk.ChatQueuedMessages(queuedMessages),
+			QueuedMessages: convertQueuedMessagesToSDK(queuedMessages),
 		})
 	}
 	// Always notify subscribers so they can re-fetch, even if we
@@ -918,7 +923,7 @@ func (p *Server) PromoteQueued(
 		result         PromoteQueuedResult
 		promoted       database.ChatMessage
 		updatedChat    database.Chat
-		remainingQueue []database.ChatQueuedMessage
+		remainingQueue []database.ChatMessage
 	)
 
 	txErr := p.db.InTx(func(tx database.Store) error {
@@ -931,50 +936,32 @@ func (p *Server) PromoteQueued(
 			modelConfigID = *opts.ModelConfigID
 		}
 
-		queuedMessages, err := tx.GetChatQueuedMessages(ctx, opts.ChatID)
-		if err != nil {
-			return xerrors.Errorf("get queued messages: %w", err)
-		}
-
-		var (
-			targetContent json.RawMessage
-			found         bool
-		)
-		for _, qm := range queuedMessages {
-			if qm.ID == opts.QueuedMessageID {
-				targetContent = qm.Content
-				found = true
-				break
+		var promoteErr error
+		promoted, promoteErr = tx.PromoteQueuedChatMessageByID(ctx, database.PromoteQueuedChatMessageByIDParams{
+			ModelConfigID: uuid.NullUUID{UUID: modelConfigID, Valid: true},
+			ID:            opts.QueuedMessageID,
+			ChatID:        opts.ChatID,
+		})
+		if promoteErr != nil {
+			if errors.Is(promoteErr, sql.ErrNoRows) {
+				return xerrors.New("queued message not found")
 			}
-		}
-		if !found {
-			return xerrors.New("queued message not found")
+			return xerrors.Errorf("promote queued message: %w", promoteErr)
 		}
 
-		err = tx.DeleteChatQueuedMessage(ctx, database.DeleteChatQueuedMessageParams{
-			ID:     opts.QueuedMessageID,
-			ChatID: opts.ChatID,
+		updatedChat, err = tx.UpdateChatStatus(ctx, database.UpdateChatStatusParams{
+			ID:          opts.ChatID,
+			Status:      database.ChatStatusPending,
+			WorkerID:    uuid.NullUUID{},
+			StartedAt:   sql.NullTime{},
+			HeartbeatAt: sql.NullTime{},
+			LastError:   sql.NullString{},
 		})
 		if err != nil {
-			return xerrors.Errorf("delete queued message: %w", err)
+			return xerrors.Errorf("set chat pending: %w", err)
 		}
 
-		promoted, updatedChat, err = insertUserMessageAndSetPending(
-			ctx,
-			tx,
-			lockedChat,
-			modelConfigID,
-			pqtype.NullRawMessage{
-				RawMessage: targetContent,
-				Valid:      len(targetContent) > 0,
-			},
-			opts.CreatedBy,
-		)
-		if err != nil {
-			return err
-		}
-
-		remainingQueue, err = tx.GetChatQueuedMessages(ctx, opts.ChatID)
+		remainingQueue, err = tx.GetQueuedChatMessages(ctx, opts.ChatID)
 		if err != nil {
 			return xerrors.Errorf("get remaining queue: %w", err)
 		}
@@ -988,7 +975,7 @@ func (p *Server) PromoteQueued(
 
 	p.publishEvent(opts.ChatID, codersdk.ChatStreamEvent{
 		Type:           codersdk.ChatStreamEventTypeQueueUpdate,
-		QueuedMessages: db2sdk.ChatQueuedMessages(remainingQueue),
+		QueuedMessages: convertQueuedMessagesToSDK(remainingQueue),
 	})
 	p.publishChatStreamNotify(opts.ChatID, coderdpubsub.ChatStreamNotifyMessage{
 		QueueUpdate: true,
@@ -1516,6 +1503,9 @@ func (p *Server) Subscribe(
 			Error:  &codersdk.ChatStreamError{Message: "failed to load initial snapshot"},
 		})
 	} else {
+		// Queued messages are excluded by the query
+		// (queued = false) and delivered separately via
+		// queue_update events.
 		for _, msg := range messages {
 			sdkMsg := db2sdk.ChatMessage(msg)
 			initialSnapshot = append(initialSnapshot, codersdk.ChatStreamEvent{
@@ -1524,10 +1514,8 @@ func (p *Server) Subscribe(
 				Message: &sdkMsg,
 			})
 		}
-	}
-
-	// Load initial queue.
-	queued, err := p.db.GetChatQueuedMessages(ctx, chatID)
+	} // Load initial queue.
+	queued, err := p.db.GetQueuedChatMessages(ctx, chatID)
 	if err != nil {
 		p.logger.Error(ctx, "failed to load initial queued messages",
 			slog.Error(err),
@@ -1542,7 +1530,7 @@ func (p *Server) Subscribe(
 		initialSnapshot = append(initialSnapshot, codersdk.ChatStreamEvent{
 			Type:           codersdk.ChatStreamEventTypeQueueUpdate,
 			ChatID:         chatID,
-			QueuedMessages: db2sdk.ChatQueuedMessages(queued),
+			QueuedMessages: convertQueuedMessagesToSDK(queued),
 		})
 	}
 
@@ -1654,6 +1642,9 @@ func (p *Server) Subscribe(
 							slog.Error(msgErr),
 						)
 					} else {
+						// Queued messages are excluded by the query
+						// (queued = false) and delivered separately via
+						// queue_update events.
 						for _, msg := range newMessages {
 							sdkMsg := db2sdk.ChatMessage(msg)
 							select {
@@ -1709,7 +1700,7 @@ func (p *Server) Subscribe(
 					}
 				}
 				if notify.QueueUpdate {
-					queuedMsgs, queueErr := p.db.GetChatQueuedMessages(mergedCtx, chatID)
+					queuedMsgs, queueErr := p.db.GetQueuedChatMessages(mergedCtx, chatID)
 					if queueErr != nil {
 						p.logger.Warn(mergedCtx, "failed to get queued messages after pubsub notification",
 							slog.F("chat_id", chatID),
@@ -1722,7 +1713,7 @@ func (p *Server) Subscribe(
 						case mergedEvents <- codersdk.ChatStreamEvent{
 							Type:           codersdk.ChatStreamEventTypeQueueUpdate,
 							ChatID:         chatID,
-							QueuedMessages: db2sdk.ChatQueuedMessages(queuedMsgs),
+							QueuedMessages: convertQueuedMessagesToSDK(queuedMsgs),
 						}:
 						}
 					}
@@ -2064,62 +2055,6 @@ func (p *Server) chatFileResolver() chatprompt.FileResolver {
 	}
 }
 
-// tryAutoPromoteQueuedMessage pops the next queued message and converts it
-// into a pending user message inside the caller's transaction. Queued
-// messages were already admitted through SendMessage, so this preserves FIFO
-// order without re-checking usage limits.
-func (p *Server) tryAutoPromoteQueuedMessage(
-	ctx context.Context,
-	tx database.Store,
-	chat database.Chat,
-) (*database.ChatMessage, []database.ChatQueuedMessage, bool, error) {
-	logger := p.logger.With(slog.F("chat_id", chat.ID))
-
-	nextQueued, err := tx.PopNextQueuedMessage(ctx, chat.ID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, false, nil
-	}
-	if err != nil {
-		return nil, nil, false, xerrors.Errorf("pop next queued message: %w", err)
-	}
-
-	msg, err := insertChatMessageWithStore(ctx, tx, database.InsertChatMessageParams{
-		ChatID:         chat.ID,
-		ModelConfigID:  uuid.NullUUID{UUID: chat.LastModelConfigID, Valid: true},
-		Role:           database.ChatMessageRoleUser,
-		ContentVersion: chatprompt.CurrentContentVersion,
-		Content: pqtype.NullRawMessage{
-			RawMessage: nextQueued.Content,
-			Valid:      len(nextQueued.Content) > 0,
-		},
-		CreatedBy:           uuid.NullUUID{UUID: chat.OwnerID, Valid: chat.OwnerID != uuid.Nil},
-		Visibility:          database.ChatMessageVisibilityBoth,
-		InputTokens:         sql.NullInt64{},
-		OutputTokens:        sql.NullInt64{},
-		TotalTokens:         sql.NullInt64{},
-		ReasoningTokens:     sql.NullInt64{},
-		CacheCreationTokens: sql.NullInt64{},
-		CacheReadTokens:     sql.NullInt64{},
-		ContextLimit:        sql.NullInt64{},
-		TotalCostMicros:     sql.NullInt64{},
-		Compressed:          sql.NullBool{},
-	})
-	if err != nil {
-		logger.Error(ctx, "failed to promote queued message",
-			slog.F("queued_message_id", nextQueued.ID), slog.Error(err))
-		return nil, nil, false, nil
-	}
-
-	remainingQueuedMessages, err := tx.GetChatQueuedMessages(ctx, chat.ID)
-	if err != nil {
-		logger.Error(ctx, "failed to load remaining queued messages after auto-promotion",
-			slog.F("queued_message_id", nextQueued.ID), slog.Error(err))
-		return &msg, nil, false, nil
-	}
-
-	return &msg, remainingQueuedMessages, true, nil
-}
-
 func (p *Server) processChat(ctx context.Context, chat database.Chat) {
 	logger := p.logger.With(slog.F("chat_id", chat.ID))
 	logger.Info(ctx, "processing chat request")
@@ -2191,7 +2126,7 @@ func (p *Server) processChat(ctx context.Context, chat database.Chat) {
 	lastError := ""
 	generatedTitle := &generatedChatTitle{}
 	runResult := runChatResult{}
-	remainingQueuedMessages := []database.ChatQueuedMessage{}
+	remainingQueuedMessages := []database.ChatMessage{}
 	shouldPublishQueueUpdate := false
 	var promotedMessage *database.ChatMessage
 
@@ -2238,14 +2173,22 @@ func (p *Server) processChat(ctx context.Context, chat database.Chat) {
 			if latestChat.Status == database.ChatStatusPending {
 				status = database.ChatStatusPending
 			} else if status == database.ChatStatusWaiting {
-				// Queued messages were already admitted through SendMessage,
-				// so auto-promotion only preserves FIFO order here.
-				var promoteErr error
-				promotedMessage, remainingQueuedMessages, shouldPublishQueueUpdate, promoteErr = p.tryAutoPromoteQueuedMessage(cleanupCtx, tx, latestChat)
-				if promoteErr != nil {
-					logger.Error(cleanupCtx, "failed to auto-promote queued message", slog.Error(promoteErr))
-				} else if promotedMessage != nil {
+				// Try to auto-promote the next queued message.
+				nextPromoted, promoteErr := tx.PromoteNextQueuedChatMessage(cleanupCtx, database.PromoteNextQueuedChatMessageParams{
+					ModelConfigID: uuid.NullUUID{UUID: latestChat.LastModelConfigID, Valid: true},
+					ChatID:        chat.ID,
+				})
+				if promoteErr == nil {
 					status = database.ChatStatusPending
+					promotedMessage = &nextPromoted
+					remaining, qErr := tx.GetQueuedChatMessages(cleanupCtx, chat.ID)
+					if qErr == nil {
+						remainingQueuedMessages = remaining
+						shouldPublishQueueUpdate = true
+					}
+				} else if !errors.Is(promoteErr, sql.ErrNoRows) {
+					logger.Error(cleanupCtx, "failed to auto-promote queued message",
+						slog.Error(promoteErr))
 				}
 			}
 
@@ -2277,7 +2220,7 @@ func (p *Server) processChat(ctx context.Context, chat database.Chat) {
 		if shouldPublishQueueUpdate {
 			p.publishEvent(chat.ID, codersdk.ChatStreamEvent{
 				Type:           codersdk.ChatStreamEventTypeQueueUpdate,
-				QueuedMessages: db2sdk.ChatQueuedMessages(remainingQueuedMessages),
+				QueuedMessages: convertQueuedMessagesToSDK(remainingQueuedMessages),
 			})
 			p.publishChatStreamNotify(chat.ID, coderdpubsub.ChatStreamNotifyMessage{
 				QueueUpdate: true,
@@ -3504,4 +3447,14 @@ func (p *Server) Close() error {
 	<-p.closed
 	p.inflight.Wait()
 	return nil
+}
+
+// convertQueuedMessagesToSDK converts a slice of database ChatMessages
+// (queued) to their SDK representation.
+func convertQueuedMessagesToSDK(messages []database.ChatMessage) []codersdk.ChatMessage {
+	out := make([]codersdk.ChatMessage, 0, len(messages))
+	for _, m := range messages {
+		out = append(out, db2sdk.ChatMessage(m))
+	}
+	return out
 }

@@ -1203,10 +1203,8 @@ func New(options *Options) *API {
 				r.Get("/stream", api.streamChat)
 				r.Post("/interrupt", api.interruptChat)
 				r.Get("/diff", api.getChatDiffContents)
-				r.Route("/queue/{queuedMessage}", func(r chi.Router) {
-					r.Delete("/", api.deleteChatQueuedMessage)
-					r.Post("/promote", api.promoteChatQueuedMessage)
-				})
+				r.Delete("/messages/{message}", api.deleteChatMessage)
+				r.Post("/messages/{message}/promote", api.promoteChatMessage)
 			})
 		})
 

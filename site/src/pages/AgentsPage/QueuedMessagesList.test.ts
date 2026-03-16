@@ -1,14 +1,14 @@
-import type { ChatQueuedMessage } from "api/typesGenerated";
+import type { ChatMessage } from "api/typesGenerated";
 import { describe, expect, it } from "vitest";
 import { getQueuedMessageInfo } from "./QueuedMessagesList";
 
-const makeMessage = (
-	content: ChatQueuedMessage["content"],
-): ChatQueuedMessage => ({
+const makeMessage = (content: ChatMessage["content"]): ChatMessage => ({
 	id: 1,
 	chat_id: "c",
 	content,
 	created_at: "",
+	role: "user",
+	queued: true,
 });
 
 describe("getQueuedMessageInfo", () => {

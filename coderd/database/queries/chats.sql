@@ -36,6 +36,7 @@ FROM
 WHERE
     chat_id = @chat_id::uuid
     AND id > @after_id::bigint
+    AND queued = false
     AND visibility IN ('user', 'both')
 ORDER BY
     created_at ASC;
@@ -51,6 +52,7 @@ WHERE
         WHEN @before_id::bigint > 0 THEN id < @before_id::bigint
         ELSE true
     END
+    AND queued = false
     AND visibility IN ('user', 'both')
 ORDER BY
     id DESC
@@ -79,6 +81,7 @@ FROM
     chat_messages
 WHERE
     chat_id = @chat_id::uuid
+    AND queued = false
     AND visibility IN ('model', 'both')
     AND (
         (
@@ -437,30 +440,90 @@ SET
 RETURNING
     *;
 
--- name: InsertChatQueuedMessage :one
-INSERT INTO chat_queued_messages (chat_id, content)
-VALUES (@chat_id, @content)
+-- name: InsertQueuedChatMessage :one
+INSERT INTO chat_messages (
+    chat_id,
+    created_by,
+    role,
+    content,
+    content_version,
+    visibility,
+    queued
+) VALUES (
+    @chat_id::uuid,
+    sqlc.narg('created_by')::uuid,
+    'user',
+    @content::jsonb,
+    1,
+    'both'::chat_message_visibility,
+    true
+)
 RETURNING *;
 
--- name: GetChatQueuedMessages :many
-SELECT * FROM chat_queued_messages
-WHERE chat_id = @chat_id
+-- name: GetQueuedChatMessages :many
+SELECT * FROM chat_messages
+WHERE chat_id = @chat_id::uuid AND queued = true
 ORDER BY id ASC;
 
--- name: DeleteChatQueuedMessage :exec
-DELETE FROM chat_queued_messages WHERE id = @id AND chat_id = @chat_id;
+-- name: DeleteQueuedChatMessage :execrows
+DELETE FROM chat_messages
+WHERE id = @id::bigint AND chat_id = @chat_id::uuid AND queued = true;
 
--- name: DeleteAllChatQueuedMessages :exec
-DELETE FROM chat_queued_messages WHERE chat_id = @chat_id;
+-- name: DeleteAllQueuedChatMessages :exec
+DELETE FROM chat_messages
+WHERE chat_id = @chat_id::uuid AND queued = true;
 
--- name: PopNextQueuedMessage :one
-DELETE FROM chat_queued_messages
-WHERE id = (
-    SELECT cqm.id FROM chat_queued_messages cqm
-    WHERE cqm.chat_id = @chat_id
-    ORDER BY cqm.id ASC
-    LIMIT 1
+-- name: PromoteNextQueuedChatMessage :one
+-- Uses DELETE + INSERT rather than UPDATE queued=false so the promoted
+-- message receives a new BIGSERIAL id (and created_at). This ensures the
+-- message sorts AFTER the assistant response that was running while it was
+-- queued. A simple UPDATE would preserve the original id/created_at from
+-- when the message was first queued, placing it BEFORE the assistant reply
+-- in conversation order.
+WITH promoted AS (
+    DELETE FROM chat_messages
+    WHERE id = (
+        SELECT cm.id FROM chat_messages cm
+        WHERE cm.chat_id = @chat_id::uuid AND cm.queued = true
+        ORDER BY cm.id ASC
+        LIMIT 1
+    )
+    RETURNING *
 )
+INSERT INTO chat_messages (
+    chat_id, created_by, model_config_id, role, content, content_version, visibility, queued
+)
+SELECT
+    chat_id,
+    created_by,
+    sqlc.narg('model_config_id')::uuid,
+    role,
+    content,
+    content_version,
+    visibility,
+    false
+FROM promoted
+RETURNING *;
+
+-- name: PromoteQueuedChatMessageByID :one
+WITH promoted AS (
+    DELETE FROM chat_messages
+    WHERE id = @id::bigint AND chat_id = @chat_id::uuid AND queued = true
+    RETURNING *
+)
+INSERT INTO chat_messages (
+    chat_id, created_by, model_config_id, role, content, content_version, visibility, queued
+)
+SELECT
+    chat_id,
+    created_by,
+    sqlc.narg('model_config_id')::uuid,
+    role,
+    content,
+    content_version,
+    visibility,
+    false
+FROM promoted
 RETURNING *;
 
 -- name: GetLastChatMessageByRole :one
@@ -471,6 +534,7 @@ FROM
 WHERE
     chat_id = @chat_id::uuid
     AND role = @role::chat_message_role
+    AND queued = false
 ORDER BY
     created_at DESC, id DESC
 LIMIT

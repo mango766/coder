@@ -357,12 +357,12 @@ func TestSendMessageQueueBehaviorQueuesWhenBusy(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, result.Queued)
-	require.NotNil(t, result.QueuedMessage)
+	require.True(t, result.Message.Queued)
 	require.Equal(t, database.ChatStatusRunning, result.Chat.Status)
 	require.Equal(t, workerID, result.Chat.WorkerID.UUID)
 	require.True(t, result.Chat.WorkerID.Valid)
 
-	queued, err := db.GetChatQueuedMessages(ctx, chat.ID)
+	queued, err := db.GetQueuedChatMessages(ctx, chat.ID)
 	require.NoError(t, err)
 	require.Len(t, queued, 1)
 
@@ -475,7 +475,7 @@ func TestSendMessageInterruptBehaviorQueuesAndInterruptsWhenBusy(t *testing.T) {
 
 	// The message should be queued, not inserted directly.
 	require.True(t, result.Queued)
-	require.NotNil(t, result.QueuedMessage)
+	require.True(t, result.Message.Queued)
 
 	// The chat should transition to waiting (interrupt signal),
 	// not pending.
@@ -486,7 +486,7 @@ func TestSendMessageInterruptBehaviorQueuesAndInterruptsWhenBusy(t *testing.T) {
 	require.Equal(t, database.ChatStatusWaiting, fromDB.Status)
 
 	// The message should be in the queue, not in chat_messages.
-	queued, err := db.GetChatQueuedMessages(ctx, chat.ID)
+	queued, err := db.GetQueuedChatMessages(ctx, chat.ID)
 	require.NoError(t, err)
 	require.Len(t, queued, 1)
 
@@ -541,12 +541,11 @@ func TestEditMessageUpdatesAndTruncatesAndClearsQueue(t *testing.T) {
 		codersdk.ChatMessageText("queued"),
 	})
 	require.NoError(t, err)
-	_, err = db.InsertChatQueuedMessage(ctx, database.InsertChatQueuedMessageParams{
+	_, err = db.InsertQueuedChatMessage(ctx, database.InsertQueuedChatMessageParams{
 		ChatID:  chat.ID,
 		Content: queuedContent,
 	})
 	require.NoError(t, err)
-
 	chat, err = db.UpdateChatStatus(ctx, database.UpdateChatStatusParams{
 		ID:          chat.ID,
 		Status:      database.ChatStatusRunning,
@@ -581,7 +580,7 @@ func TestEditMessageUpdatesAndTruncatesAndClearsQueue(t *testing.T) {
 	require.Len(t, onlyMessage.Content, 1)
 	require.Equal(t, "edited", onlyMessage.Content[0].Text)
 
-	queued, err := db.GetChatQueuedMessages(ctx, chat.ID)
+	queued, err := db.GetQueuedChatMessages(ctx, chat.ID)
 	require.NoError(t, err)
 	require.Len(t, queued, 0)
 

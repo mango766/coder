@@ -1280,9 +1280,9 @@ func TestMixedFormatConversation(t *testing.T) {
 // TestQueuedMessageRoundTrip verifies that a user message with
 // file-reference parts survives the queue → promote cycle. The
 // queued path stores MarshalParts output as raw JSON in
-// chat_queued_messages, db2sdk.ChatQueuedMessage parses it for
-// display while queued, then PromoteQueued copies the same raw
-// bytes into chat_messages where ParseContent reads them.
+// chat_messages with queued=true, db2sdk.ChatMessage parses it
+// for display while queued, then promotion clears the queued
+// flag and ParseContent reads the same raw bytes.
 func TestQueuedMessageRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -1295,13 +1295,16 @@ func TestQueuedMessageRoundTrip(t *testing.T) {
 	raw, err := chatprompt.MarshalParts(parts)
 	require.NoError(t, err)
 
-	// Step 1: While queued, db2sdk.ChatQueuedMessage parses the
+	// Step 1: While queued, db2sdk.ChatMessage parses the
 	// content for display. Verify it produces correct parts
 	// (with internal fields stripped).
-	queuedMsg := db2sdk.ChatQueuedMessage(database.ChatQueuedMessage{
-		ID:      1,
-		ChatID:  uuid.New(),
-		Content: raw.RawMessage,
+	queuedMsg := db2sdk.ChatMessage(database.ChatMessage{
+		ID:         1,
+		ChatID:     uuid.New(),
+		Content:    pqtype.NullRawMessage{RawMessage: raw.RawMessage, Valid: true},
+		Role:       database.ChatMessageRoleUser,
+		Visibility: database.ChatMessageVisibilityBoth,
+		Queued:     true,
 	})
 	require.Len(t, queuedMsg.Content, 2)
 	assert.Equal(t, codersdk.ChatMessagePartTypeText, queuedMsg.Content[0].Type)
@@ -1312,8 +1315,8 @@ func TestQueuedMessageRoundTrip(t *testing.T) {
 	assert.Equal(t, 58, queuedMsg.Content[1].EndLine)
 	assert.Equal(t, "func handleRequest() {}", queuedMsg.Content[1].Content)
 
-	// Step 2: PromoteQueued copies the raw bytes into
-	// chat_messages. ParseContent must handle them identically.
+	// Step 2: After promotion (queued flag cleared), the same
+	// raw bytes in chat_messages are read by ParseContent.
 	promoted, err := chatprompt.ParseContent(testMsg(codersdk.ChatMessageRoleUser, pqtype.NullRawMessage{
 		RawMessage: raw.RawMessage,
 		Valid:      true,

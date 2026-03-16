@@ -80,7 +80,8 @@ export const AgentDetailTimeline: FC<AgentDetailTimelineProps> = ({
 		() =>
 			orderedMessageIDs
 				.map((messageID) => messagesByID.get(messageID))
-				.filter(isChatMessage),
+				.filter(isChatMessage)
+				.filter((m) => !m.queued),
 		[messagesByID, orderedMessageIDs],
 	);
 	const streamTools = useMemo(
@@ -216,7 +217,8 @@ export const AgentDetailInput: FC<AgentDetailInputProps> = ({
 		() =>
 			orderedMessageIDs
 				.map((messageID) => messagesByID.get(messageID))
-				.filter(isChatMessage),
+				.filter(isChatMessage)
+				.filter((m) => !m.queued),
 		[messagesByID, orderedMessageIDs],
 	);
 	const { organizations } = useDashboard();

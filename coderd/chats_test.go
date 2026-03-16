@@ -1612,7 +1612,10 @@ func TestGetChat(t *testing.T) {
 		require.NotZero(t, chatResult.CreatedAt)
 		require.NotZero(t, chatResult.UpdatedAt)
 		require.NotEmpty(t, messagesResult.Messages)
-		require.Empty(t, messagesResult.QueuedMessages)
+		// All messages should be non-queued.
+		for _, msg := range messagesResult.Messages {
+			require.False(t, msg.Queued)
+		}
 
 		foundUserMessage := false
 		for _, message := range messagesResult.Messages {
@@ -1918,12 +1921,10 @@ func TestPostChatMessages(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		if created.Queued {
-			require.Nil(t, created.Message)
-			require.NotNil(t, created.QueuedMessage)
-			require.Equal(t, chat.ID, created.QueuedMessage.ChatID)
-			require.NotZero(t, created.QueuedMessage.ID)
-			require.True(t, hasTextPart(created.QueuedMessage.Content, messageText))
+		if created.Message.Queued {
+			require.Equal(t, chat.ID, created.Message.ChatID)
+			require.NotZero(t, created.Message.ID)
+			require.True(t, hasTextPart(created.Message.Content, messageText))
 
 			require.Eventually(t, func() bool {
 				messagesResult, getErr := client.GetChatMessages(ctx, chat.ID, nil)
@@ -1931,10 +1932,11 @@ func TestPostChatMessages(t *testing.T) {
 					return false
 				}
 
-				for _, queued := range messagesResult.QueuedMessages {
-					if queued.ID == created.QueuedMessage.ID &&
-						queued.ChatID == chat.ID &&
-						hasTextPart(queued.Content, messageText) {
+				for _, msg := range messagesResult.Messages {
+					if msg.Queued &&
+						msg.ID == created.Message.ID &&
+						msg.ChatID == chat.ID &&
+						hasTextPart(msg.Content, messageText) {
 						return true
 					}
 				}
@@ -1946,8 +1948,6 @@ func TestPostChatMessages(t *testing.T) {
 				return false
 			}, testutil.WaitLong, testutil.IntervalFast)
 		} else {
-			require.Nil(t, created.QueuedMessage)
-			require.NotNil(t, created.Message)
 			require.Equal(t, chat.ID, created.Message.ChatID)
 			require.Equal(t, codersdk.ChatMessageRoleUser, created.Message.Role)
 			require.NotZero(t, created.Message.ID)
@@ -2113,12 +2113,14 @@ func TestChatMessageWithFileReferences(t *testing.T) {
 				}
 			}
 			// The message may have been queued.
-			if created.Queued && created.QueuedMessage != nil {
-				for _, queued := range messagesResult.QueuedMessages {
-					for _, part := range queued.Content {
-						if checkFileRef(part) {
-							found = true
-							return true
+			if created.Message.Queued {
+				for _, msg := range messagesResult.Messages {
+					if msg.Queued {
+						for _, part := range msg.Content {
+							if checkFileRef(part) {
+								found = true
+								return true
+							}
 						}
 					}
 				}
@@ -2168,11 +2170,13 @@ func TestChatMessageWithFileReferences(t *testing.T) {
 					}
 				}
 			}
-			if created.Queued && created.QueuedMessage != nil {
-				for _, queued := range messagesResult.QueuedMessages {
-					for _, part := range queued.Content {
-						if checkFileRef(part) {
-							return true
+			if created.Message.Queued {
+				for _, msg := range messagesResult.Messages {
+					if msg.Queued {
+						for _, part := range msg.Content {
+							if checkFileRef(part) {
+								return true
+							}
 						}
 					}
 				}
@@ -2221,11 +2225,13 @@ func TestChatMessageWithFileReferences(t *testing.T) {
 					}
 				}
 			}
-			if created.Queued && created.QueuedMessage != nil {
-				for _, queued := range messagesResult.QueuedMessages {
-					for _, part := range queued.Content {
-						if checkFileRef(part) {
-							return true
+			if created.Message.Queued {
+				for _, msg := range messagesResult.Messages {
+					if msg.Queued {
+						for _, part := range msg.Content {
+							if checkFileRef(part) {
+								return true
+							}
 						}
 					}
 				}
@@ -2274,11 +2280,13 @@ func TestChatMessageWithFileReferences(t *testing.T) {
 					}
 				}
 			}
-			if created.Queued && created.QueuedMessage != nil {
-				for _, queued := range messagesResult.QueuedMessages {
-					for _, part := range queued.Content {
-						if checkFileRef(part) {
-							return true
+			if created.Message.Queued {
+				for _, msg := range messagesResult.Messages {
+					if msg.Queued {
+						for _, part := range msg.Content {
+							if checkFileRef(part) {
+								return true
+							}
 						}
 					}
 				}
@@ -2389,9 +2397,9 @@ func TestChatMessageWithFileReferences(t *testing.T) {
 					return true
 				}
 			}
-			if created.Queued && created.QueuedMessage != nil {
-				for _, queued := range messagesResult.QueuedMessages {
-					if checkParts(queued.Content) {
+			if created.Message.Queued {
+				for _, msg := range messagesResult.Messages {
+					if msg.Queued && checkParts(msg.Content) {
 						return true
 					}
 				}
@@ -2488,11 +2496,11 @@ func TestChatMessageWithFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the message was accepted.
-		if resp.Queued {
-			require.NotNil(t, resp.QueuedMessage)
+		if resp.Message.Queued {
+			require.NotZero(t, resp.Message.ID)
 		} else {
-			require.NotNil(t, resp.Message)
-			require.Equal(t, codersdk.ChatMessageRoleUser, resp.Message.Role)
+			require.NotZero(t, resp.Message.ID)
+			require.Equal(t, "user", resp.Message.Role)
 		}
 	})
 
@@ -2535,14 +2543,12 @@ func TestChatMessageWithFiles(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		if resp.Queued {
-			require.NotNil(t, resp.QueuedMessage)
+		if resp.Message.Queued {
+			require.NotZero(t, resp.Message.ID)
 		} else {
-			require.NotNil(t, resp.Message)
-			require.Equal(t, codersdk.ChatMessageRoleUser, resp.Message.Role)
+			require.NotZero(t, resp.Message.ID)
+			require.Equal(t, "user", resp.Message.Role)
 		}
-
-		// Verify file parts omit inline data in the API response.
 		messagesResult, err := client.GetChatMessages(ctx, chat.ID, nil)
 		require.NoError(t, err)
 		for _, msg := range messagesResult.Messages {
@@ -3381,7 +3387,7 @@ func TestGetChatDiffContents(t *testing.T) {
 	})
 }
 
-func TestDeleteChatQueuedMessage(t *testing.T) {
+func TestDeleteChatMessage(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Success", func(t *testing.T) {
@@ -3403,9 +3409,8 @@ func TestDeleteChatQueuedMessage(t *testing.T) {
 			codersdk.ChatMessageText("queued message for delete route"),
 		})
 		require.NoError(t, err)
-		queuedMessage, err := db.InsertChatQueuedMessage(
-			dbauthz.AsSystemRestricted(ctx),
-			database.InsertChatQueuedMessageParams{
+		queuedMessage, err := db.InsertQueuedChatMessage(dbauthz.AsSystemRestricted(ctx),
+			database.InsertQueuedChatMessageParams{
 				ChatID:  chat.ID,
 				Content: deleteContent,
 			},
@@ -3415,7 +3420,7 @@ func TestDeleteChatQueuedMessage(t *testing.T) {
 		res, err := client.Request(
 			ctx,
 			http.MethodDelete,
-			fmt.Sprintf("/api/experimental/chats/%s/queue/%d", chat.ID, queuedMessage.ID),
+			fmt.Sprintf("/api/experimental/chats/%s/messages/%d", chat.ID, queuedMessage.ID),
 			nil,
 		)
 		require.NoError(t, err)
@@ -3424,11 +3429,13 @@ func TestDeleteChatQueuedMessage(t *testing.T) {
 
 		messagesResult, err := client.GetChatMessages(ctx, chat.ID, nil)
 		require.NoError(t, err)
-		for _, queued := range messagesResult.QueuedMessages {
-			require.NotEqual(t, queuedMessage.ID, queued.ID)
+		for _, msg := range messagesResult.Messages {
+			if msg.Queued {
+				require.NotEqual(t, queuedMessage.ID, msg.ID)
+			}
 		}
 
-		queuedMessages, err := db.GetChatQueuedMessages(dbauthz.AsSystemRestricted(ctx), chat.ID)
+		queuedMessages, err := db.GetQueuedChatMessages(dbauthz.AsSystemRestricted(ctx), chat.ID)
 		require.NoError(t, err)
 		for _, queued := range queuedMessages {
 			require.NotEqual(t, queuedMessage.ID, queued.ID)
@@ -3453,7 +3460,7 @@ func TestDeleteChatQueuedMessage(t *testing.T) {
 		invalidRes, err := client.Request(
 			ctx,
 			http.MethodDelete,
-			fmt.Sprintf("/api/experimental/chats/%s/queue/not-an-int", chat.ID),
+			fmt.Sprintf("/api/experimental/chats/%s/messages/not-an-int", chat.ID),
 			nil,
 		)
 		require.NoError(t, err)
@@ -3461,12 +3468,12 @@ func TestDeleteChatQueuedMessage(t *testing.T) {
 
 		err = codersdk.ReadBodyAsError(invalidRes)
 		sdkErr := requireSDKError(t, err, http.StatusBadRequest)
-		require.Equal(t, "Invalid queued message ID.", sdkErr.Message)
+		require.Equal(t, "Invalid message ID.", sdkErr.Message)
 		require.Contains(t, sdkErr.Detail, "invalid syntax")
 	})
 }
 
-func TestPromoteChatQueuedMessage(t *testing.T) {
+func TestPromoteChatMessage(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Success", func(t *testing.T) {
@@ -3489,9 +3496,8 @@ func TestPromoteChatQueuedMessage(t *testing.T) {
 			codersdk.ChatMessageText(queuedText),
 		})
 		require.NoError(t, err)
-		queuedMessage, err := db.InsertChatQueuedMessage(
-			dbauthz.AsSystemRestricted(ctx),
-			database.InsertChatQueuedMessageParams{
+		queuedMessage, err := db.InsertQueuedChatMessage(dbauthz.AsSystemRestricted(ctx),
+			database.InsertQueuedChatMessageParams{
 				ChatID:  chat.ID,
 				Content: queuedContent,
 			},
@@ -3501,7 +3507,7 @@ func TestPromoteChatQueuedMessage(t *testing.T) {
 		promoteRes, err := client.Request(
 			ctx,
 			http.MethodPost,
-			fmt.Sprintf("/api/experimental/chats/%s/queue/%d/promote", chat.ID, queuedMessage.ID),
+			fmt.Sprintf("/api/experimental/chats/%s/messages/%d/promote", chat.ID, queuedMessage.ID),
 			nil,
 		)
 		require.NoError(t, err)
@@ -3527,11 +3533,13 @@ func TestPromoteChatQueuedMessage(t *testing.T) {
 
 		messagesResult, err := client.GetChatMessages(ctx, chat.ID, nil)
 		require.NoError(t, err)
-		for _, queued := range messagesResult.QueuedMessages {
-			require.NotEqual(t, queuedMessage.ID, queued.ID)
+		for _, msg := range messagesResult.Messages {
+			if msg.Queued {
+				require.NotEqual(t, queuedMessage.ID, msg.ID)
+			}
 		}
 
-		queuedMessages, err := db.GetChatQueuedMessages(dbauthz.AsSystemRestricted(ctx), chat.ID)
+		queuedMessages, err := db.GetQueuedChatMessages(dbauthz.AsSystemRestricted(ctx), chat.ID)
 		require.NoError(t, err)
 		for _, queued := range queuedMessages {
 			require.NotEqual(t, queuedMessage.ID, queued.ID)
@@ -3559,9 +3567,9 @@ func TestPromoteChatQueuedMessage(t *testing.T) {
 			codersdk.ChatMessageText(queuedText),
 		})
 		require.NoError(t, err)
-		queuedMessage, err := db.InsertChatQueuedMessage(
+		queuedMessage, err := db.InsertQueuedChatMessage(
 			dbauthz.AsSystemRestricted(ctx),
-			database.InsertChatQueuedMessageParams{
+			database.InsertQueuedChatMessageParams{
 				ChatID:  chat.ID,
 				Content: queuedContent,
 			},
@@ -3606,7 +3614,7 @@ func TestPromoteChatQueuedMessage(t *testing.T) {
 		}
 		require.True(t, foundPromotedText)
 
-		queuedMessages, err := db.GetChatQueuedMessages(dbauthz.AsSystemRestricted(ctx), chat.ID)
+		queuedMessages, err := db.GetQueuedChatMessages(dbauthz.AsSystemRestricted(ctx), chat.ID)
 		require.NoError(t, err)
 		for _, queued := range queuedMessages {
 			require.NotEqual(t, queuedMessage.ID, queued.ID)
@@ -3631,7 +3639,7 @@ func TestPromoteChatQueuedMessage(t *testing.T) {
 		invalidRes, err := client.Request(
 			ctx,
 			http.MethodPost,
-			fmt.Sprintf("/api/experimental/chats/%s/queue/not-an-int/promote", chat.ID),
+			fmt.Sprintf("/api/experimental/chats/%s/messages/not-an-int/promote", chat.ID),
 			nil,
 		)
 		require.NoError(t, err)
@@ -3639,7 +3647,7 @@ func TestPromoteChatQueuedMessage(t *testing.T) {
 
 		err = codersdk.ReadBodyAsError(invalidRes)
 		sdkErr := requireSDKError(t, err, http.StatusBadRequest)
-		require.Equal(t, "Invalid queued message ID.", sdkErr.Message)
+		require.Equal(t, "Invalid message ID.", sdkErr.Message)
 		require.Contains(t, sdkErr.Detail, "invalid syntax")
 	})
 }
