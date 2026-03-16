@@ -2940,6 +2940,26 @@ class ApiMethods {
 		return response.data;
 	};
 
+	getAIBridgeSessionList = async (options: SearchParamOptions) => {
+		const url = getURLWithSearchParams("/api/v2/aibridge/sessions", options);
+		const response =
+			await this.axios.get<TypesGen.AIBridgeListSessionsResponse>(url);
+		return response.data;
+	};
+
+	getAIBridgeSession = async (
+		sessionId: string,
+		options: SearchParamOptions,
+	) => {
+		const url = getURLWithSearchParams(
+			`/api/v2/aibridge/sessions/${sessionId}`,
+			options,
+		);
+		const response =
+			await this.axios.get<TypesGen.AIBridgeSessionThreadsResponse>(url);
+		return response.data;
+	};
+
 	// Chat API methods
 	getChats = async (req?: {
 		after_id?: string;
