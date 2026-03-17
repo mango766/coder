@@ -1699,6 +1699,10 @@ func (q *querier) CountAIBridgeInterceptions(ctx context.Context, arg database.C
 	return q.db.CountAuthorizedAIBridgeInterceptions(ctx, arg, prep)
 }
 
+func (q *querier) CountActiveChatAutomationRuns(ctx context.Context, automationID uuid.UUID) (int64, error) {
+	panic("not implemented")
+}
+
 func (q *querier) CountAuditLogs(ctx context.Context, arg database.CountAuditLogsParams) (int64, error) {
 	// Shortcut if the user is an owner. The SQL filter is noticeable,
 	// and this is an easy win for owners. Which is the common case.
@@ -1815,6 +1819,10 @@ func (q *querier) DeleteApplicationConnectAPIKeysByUserID(ctx context.Context, u
 		return err
 	}
 	return q.db.DeleteApplicationConnectAPIKeysByUserID(ctx, userID)
+}
+
+func (q *querier) DeleteChatAutomation(ctx context.Context, id uuid.UUID) error {
+	panic("not implemented")
 }
 
 func (q *querier) DeleteChatMessagesAfterID(ctx context.Context, arg database.DeleteChatMessagesAfterIDParams) error {
@@ -2418,6 +2426,18 @@ func (q *querier) GetAuthorizationUserRoles(ctx context.Context, userID uuid.UUI
 	return q.db.GetAuthorizationUserRoles(ctx, userID)
 }
 
+func (q *querier) GetChatAutomationByID(ctx context.Context, id uuid.UUID) (database.ChatAutomation, error) {
+	panic("not implemented")
+}
+
+func (q *querier) GetChatAutomationRunsByAutomationID(ctx context.Context, arg database.GetChatAutomationRunsByAutomationIDParams) ([]database.ChatAutomationRun, error) {
+	panic("not implemented")
+}
+
+func (q *querier) GetChatAutomationsByOwnerID(ctx context.Context, ownerID uuid.UUID) ([]database.ChatAutomation, error) {
+	panic("not implemented")
+}
+
 func (q *querier) GetChatByID(ctx context.Context, id uuid.UUID) (database.Chat, error) {
 	return fetch(q.log, q.auth, q.db.GetChatByID)(ctx, id)
 }
@@ -2701,6 +2721,10 @@ func (q *querier) GetEnabledChatProviders(ctx context.Context) ([]database.ChatP
 		return nil, err
 	}
 	return q.db.GetEnabledChatProviders(ctx)
+}
+
+func (q *querier) GetEnabledCronChatAutomations(ctx context.Context) ([]database.ChatAutomation, error) {
+	panic("not implemented")
 }
 
 func (q *querier) GetExternalAuthLink(ctx context.Context, arg database.GetExternalAuthLinkParams) (database.ExternalAuthLink, error) {
@@ -4477,6 +4501,14 @@ func (q *querier) InsertChat(ctx context.Context, arg database.InsertChatParams)
 	return insert(q.log, q.auth, rbac.ResourceChat.WithOwner(arg.OwnerID.String()), q.db.InsertChat)(ctx, arg)
 }
 
+func (q *querier) InsertChatAutomation(ctx context.Context, arg database.InsertChatAutomationParams) (database.ChatAutomation, error) {
+	panic("not implemented")
+}
+
+func (q *querier) InsertChatAutomationRun(ctx context.Context, arg database.InsertChatAutomationRunParams) (database.ChatAutomationRun, error) {
+	panic("not implemented")
+}
+
 func (q *querier) InsertChatFile(ctx context.Context, arg database.InsertChatFileParams) (database.InsertChatFileRow, error) {
 	// Authorize create on chat resource scoped to the owner and org.
 	return insert(q.log, q.auth, rbac.ResourceChat.WithOwner(arg.OwnerID.String()).InOrg(arg.OrganizationID), q.db.InsertChatFile)(ctx, arg)
@@ -5306,6 +5338,18 @@ func (q *querier) UpdateAPIKeyByID(ctx context.Context, arg database.UpdateAPIKe
 		return q.db.GetAPIKeyByID(ctx, arg.ID)
 	}
 	return update(q.log, q.auth, fetch, q.db.UpdateAPIKeyByID)(ctx, arg)
+}
+
+func (q *querier) UpdateChatAutomation(ctx context.Context, arg database.UpdateChatAutomationParams) (database.ChatAutomation, error) {
+	panic("not implemented")
+}
+
+func (q *querier) UpdateChatAutomationRun(ctx context.Context, arg database.UpdateChatAutomationRunParams) (database.ChatAutomationRun, error) {
+	panic("not implemented")
+}
+
+func (q *querier) UpdateChatAutomationWebhookSecret(ctx context.Context, arg database.UpdateChatAutomationWebhookSecretParams) (database.ChatAutomation, error) {
+	panic("not implemented")
 }
 
 func (q *querier) UpdateChatByID(ctx context.Context, arg database.UpdateChatByIDParams) (database.Chat, error) {

@@ -75,6 +75,7 @@ type sqlcQuerier interface {
 	CleanTailnetLostPeers(ctx context.Context) error
 	CleanTailnetTunnels(ctx context.Context) error
 	CountAIBridgeInterceptions(ctx context.Context, arg CountAIBridgeInterceptionsParams) (int64, error)
+	CountActiveChatAutomationRuns(ctx context.Context, automationID uuid.UUID) (int64, error)
 	CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error)
 	CountConnectionLogs(ctx context.Context, arg CountConnectionLogsParams) (int64, error)
 	// CountInProgressPrebuilds returns the number of in-progress prebuilds, grouped by preset ID and transition.
@@ -95,6 +96,7 @@ type sqlcQuerier interface {
 	// be recreated.
 	DeleteAllWebpushSubscriptions(ctx context.Context) error
 	DeleteApplicationConnectAPIKeysByUserID(ctx context.Context, userID uuid.UUID) error
+	DeleteChatAutomation(ctx context.Context, id uuid.UUID) error
 	DeleteChatMessagesAfterID(ctx context.Context, arg DeleteChatMessagesAfterIDParams) error
 	DeleteChatModelConfigByID(ctx context.Context, id uuid.UUID) error
 	DeleteChatProviderByID(ctx context.Context, id uuid.UUID) error
@@ -213,6 +215,9 @@ type sqlcQuerier interface {
 	// This function returns roles for authorization purposes. Implied member roles
 	// are included.
 	GetAuthorizationUserRoles(ctx context.Context, userID uuid.UUID) (GetAuthorizationUserRolesRow, error)
+	GetChatAutomationByID(ctx context.Context, id uuid.UUID) (ChatAutomation, error)
+	GetChatAutomationRunsByAutomationID(ctx context.Context, arg GetChatAutomationRunsByAutomationIDParams) ([]ChatAutomationRun, error)
+	GetChatAutomationsByOwnerID(ctx context.Context, ownerID uuid.UUID) ([]ChatAutomation, error)
 	GetChatByID(ctx context.Context, id uuid.UUID) (Chat, error)
 	GetChatByIDForUpdate(ctx context.Context, id uuid.UUID) (Chat, error)
 	// Per-root-chat cost breakdown for a single user within a date range.
@@ -259,6 +264,7 @@ type sqlcQuerier interface {
 	GetEligibleProvisionerDaemonsByProvisionerJobIDs(ctx context.Context, provisionerJobIds []uuid.UUID) ([]GetEligibleProvisionerDaemonsByProvisionerJobIDsRow, error)
 	GetEnabledChatModelConfigs(ctx context.Context) ([]ChatModelConfig, error)
 	GetEnabledChatProviders(ctx context.Context) ([]ChatProvider, error)
+	GetEnabledCronChatAutomations(ctx context.Context) ([]ChatAutomation, error)
 	GetExternalAuthLink(ctx context.Context, arg GetExternalAuthLinkParams) (ExternalAuthLink, error)
 	GetExternalAuthLinksByUserID(ctx context.Context, userID uuid.UUID) ([]ExternalAuthLink, error)
 	GetFailedWorkspaceBuildsByTemplateID(ctx context.Context, arg GetFailedWorkspaceBuildsByTemplateIDParams) ([]GetFailedWorkspaceBuildsByTemplateIDRow, error)
@@ -608,6 +614,8 @@ type sqlcQuerier interface {
 	InsertAllUsersGroup(ctx context.Context, organizationID uuid.UUID) (Group, error)
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
 	InsertChat(ctx context.Context, arg InsertChatParams) (Chat, error)
+	InsertChatAutomation(ctx context.Context, arg InsertChatAutomationParams) (ChatAutomation, error)
+	InsertChatAutomationRun(ctx context.Context, arg InsertChatAutomationRunParams) (ChatAutomationRun, error)
 	InsertChatFile(ctx context.Context, arg InsertChatFileParams) (InsertChatFileRow, error)
 	InsertChatMessage(ctx context.Context, arg InsertChatMessageParams) (ChatMessage, error)
 	InsertChatModelConfig(ctx context.Context, arg InsertChatModelConfigParams) (ChatModelConfig, error)
@@ -732,6 +740,9 @@ type sqlcQuerier interface {
 	UnsetDefaultChatModelConfigs(ctx context.Context) error
 	UpdateAIBridgeInterceptionEnded(ctx context.Context, arg UpdateAIBridgeInterceptionEndedParams) (AIBridgeInterception, error)
 	UpdateAPIKeyByID(ctx context.Context, arg UpdateAPIKeyByIDParams) error
+	UpdateChatAutomation(ctx context.Context, arg UpdateChatAutomationParams) (ChatAutomation, error)
+	UpdateChatAutomationRun(ctx context.Context, arg UpdateChatAutomationRunParams) (ChatAutomationRun, error)
+	UpdateChatAutomationWebhookSecret(ctx context.Context, arg UpdateChatAutomationWebhookSecretParams) (ChatAutomation, error)
 	UpdateChatByID(ctx context.Context, arg UpdateChatByIDParams) (Chat, error)
 	// Bumps the heartbeat timestamp for a running chat so that other
 	// replicas know the worker is still alive.

@@ -2214,6 +2214,492 @@ func (q *sqlQuerier) UpsertBoundaryUsageStats(ctx context.Context, arg UpsertBou
 	return new_period, err
 }
 
+const countActiveChatAutomationRuns = `-- name: CountActiveChatAutomationRuns :one
+SELECT
+    COUNT(*)
+FROM
+    chat_automation_runs
+WHERE
+    automation_id = $1::uuid
+    AND status IN ('pending', 'running')
+`
+
+func (q *sqlQuerier) CountActiveChatAutomationRuns(ctx context.Context, automationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveChatAutomationRuns, automationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteChatAutomation = `-- name: DeleteChatAutomation :exec
+DELETE FROM chat_automations WHERE id = $1::uuid
+`
+
+func (q *sqlQuerier) DeleteChatAutomation(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.ExecContext(ctx, deleteChatAutomation, id)
+	return err
+}
+
+const getChatAutomationByID = `-- name: GetChatAutomationByID :one
+SELECT
+    id, owner_id, name, description, icon, trigger_type, webhook_secret, cron_schedule, model_config_id, system_prompt, prompt_template, enabled, max_concurrent_runs, created_at, updated_at
+FROM
+    chat_automations
+WHERE
+    id = $1::uuid
+`
+
+func (q *sqlQuerier) GetChatAutomationByID(ctx context.Context, id uuid.UUID) (ChatAutomation, error) {
+	row := q.db.QueryRowContext(ctx, getChatAutomationByID, id)
+	var i ChatAutomation
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Icon,
+		&i.TriggerType,
+		&i.WebhookSecret,
+		&i.CronSchedule,
+		&i.ModelConfigID,
+		&i.SystemPrompt,
+		&i.PromptTemplate,
+		&i.Enabled,
+		&i.MaxConcurrentRuns,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getChatAutomationRunsByAutomationID = `-- name: GetChatAutomationRunsByAutomationID :many
+SELECT
+    id, automation_id, chat_id, trigger_payload, rendered_prompt, status, error, started_at, completed_at, created_at
+FROM
+    chat_automation_runs
+WHERE
+    automation_id = $1::uuid
+ORDER BY
+    created_at DESC
+LIMIT
+    COALESCE(NULLIF($2::int, 0), 50)
+`
+
+type GetChatAutomationRunsByAutomationIDParams struct {
+	AutomationID uuid.UUID `db:"automation_id" json:"automation_id"`
+	LimitOpt     int32     `db:"limit_opt" json:"limit_opt"`
+}
+
+func (q *sqlQuerier) GetChatAutomationRunsByAutomationID(ctx context.Context, arg GetChatAutomationRunsByAutomationIDParams) ([]ChatAutomationRun, error) {
+	rows, err := q.db.QueryContext(ctx, getChatAutomationRunsByAutomationID, arg.AutomationID, arg.LimitOpt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChatAutomationRun
+	for rows.Next() {
+		var i ChatAutomationRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.AutomationID,
+			&i.ChatID,
+			&i.TriggerPayload,
+			&i.RenderedPrompt,
+			&i.Status,
+			&i.Error,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getChatAutomationsByOwnerID = `-- name: GetChatAutomationsByOwnerID :many
+SELECT
+    id, owner_id, name, description, icon, trigger_type, webhook_secret, cron_schedule, model_config_id, system_prompt, prompt_template, enabled, max_concurrent_runs, created_at, updated_at
+FROM
+    chat_automations
+WHERE
+    owner_id = $1::uuid
+ORDER BY
+    created_at DESC
+`
+
+func (q *sqlQuerier) GetChatAutomationsByOwnerID(ctx context.Context, ownerID uuid.UUID) ([]ChatAutomation, error) {
+	rows, err := q.db.QueryContext(ctx, getChatAutomationsByOwnerID, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChatAutomation
+	for rows.Next() {
+		var i ChatAutomation
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Description,
+			&i.Icon,
+			&i.TriggerType,
+			&i.WebhookSecret,
+			&i.CronSchedule,
+			&i.ModelConfigID,
+			&i.SystemPrompt,
+			&i.PromptTemplate,
+			&i.Enabled,
+			&i.MaxConcurrentRuns,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getEnabledCronChatAutomations = `-- name: GetEnabledCronChatAutomations :many
+SELECT
+    id, owner_id, name, description, icon, trigger_type, webhook_secret, cron_schedule, model_config_id, system_prompt, prompt_template, enabled, max_concurrent_runs, created_at, updated_at
+FROM
+    chat_automations
+WHERE
+    trigger_type = 'cron'
+    AND enabled = TRUE
+`
+
+func (q *sqlQuerier) GetEnabledCronChatAutomations(ctx context.Context) ([]ChatAutomation, error) {
+	rows, err := q.db.QueryContext(ctx, getEnabledCronChatAutomations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChatAutomation
+	for rows.Next() {
+		var i ChatAutomation
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Description,
+			&i.Icon,
+			&i.TriggerType,
+			&i.WebhookSecret,
+			&i.CronSchedule,
+			&i.ModelConfigID,
+			&i.SystemPrompt,
+			&i.PromptTemplate,
+			&i.Enabled,
+			&i.MaxConcurrentRuns,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const insertChatAutomation = `-- name: InsertChatAutomation :one
+INSERT INTO chat_automations (
+    owner_id,
+    name,
+    description,
+    icon,
+    trigger_type,
+    webhook_secret,
+    cron_schedule,
+    model_config_id,
+    system_prompt,
+    prompt_template,
+    enabled,
+    max_concurrent_runs
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12
+)
+RETURNING
+    id, owner_id, name, description, icon, trigger_type, webhook_secret, cron_schedule, model_config_id, system_prompt, prompt_template, enabled, max_concurrent_runs, created_at, updated_at
+`
+
+type InsertChatAutomationParams struct {
+	OwnerID           uuid.UUID      `db:"owner_id" json:"owner_id"`
+	Name              string         `db:"name" json:"name"`
+	Description       string         `db:"description" json:"description"`
+	Icon              string         `db:"icon" json:"icon"`
+	TriggerType       string         `db:"trigger_type" json:"trigger_type"`
+	WebhookSecret     sql.NullString `db:"webhook_secret" json:"webhook_secret"`
+	CronSchedule      sql.NullString `db:"cron_schedule" json:"cron_schedule"`
+	ModelConfigID     uuid.UUID      `db:"model_config_id" json:"model_config_id"`
+	SystemPrompt      string         `db:"system_prompt" json:"system_prompt"`
+	PromptTemplate    string         `db:"prompt_template" json:"prompt_template"`
+	Enabled           bool           `db:"enabled" json:"enabled"`
+	MaxConcurrentRuns int32          `db:"max_concurrent_runs" json:"max_concurrent_runs"`
+}
+
+func (q *sqlQuerier) InsertChatAutomation(ctx context.Context, arg InsertChatAutomationParams) (ChatAutomation, error) {
+	row := q.db.QueryRowContext(ctx, insertChatAutomation,
+		arg.OwnerID,
+		arg.Name,
+		arg.Description,
+		arg.Icon,
+		arg.TriggerType,
+		arg.WebhookSecret,
+		arg.CronSchedule,
+		arg.ModelConfigID,
+		arg.SystemPrompt,
+		arg.PromptTemplate,
+		arg.Enabled,
+		arg.MaxConcurrentRuns,
+	)
+	var i ChatAutomation
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Icon,
+		&i.TriggerType,
+		&i.WebhookSecret,
+		&i.CronSchedule,
+		&i.ModelConfigID,
+		&i.SystemPrompt,
+		&i.PromptTemplate,
+		&i.Enabled,
+		&i.MaxConcurrentRuns,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertChatAutomationRun = `-- name: InsertChatAutomationRun :one
+INSERT INTO chat_automation_runs (
+    automation_id,
+    trigger_payload,
+    rendered_prompt
+) VALUES (
+    $1,
+    $2,
+    $3
+)
+RETURNING
+    id, automation_id, chat_id, trigger_payload, rendered_prompt, status, error, started_at, completed_at, created_at
+`
+
+type InsertChatAutomationRunParams struct {
+	AutomationID   uuid.UUID       `db:"automation_id" json:"automation_id"`
+	TriggerPayload json.RawMessage `db:"trigger_payload" json:"trigger_payload"`
+	RenderedPrompt string          `db:"rendered_prompt" json:"rendered_prompt"`
+}
+
+func (q *sqlQuerier) InsertChatAutomationRun(ctx context.Context, arg InsertChatAutomationRunParams) (ChatAutomationRun, error) {
+	row := q.db.QueryRowContext(ctx, insertChatAutomationRun, arg.AutomationID, arg.TriggerPayload, arg.RenderedPrompt)
+	var i ChatAutomationRun
+	err := row.Scan(
+		&i.ID,
+		&i.AutomationID,
+		&i.ChatID,
+		&i.TriggerPayload,
+		&i.RenderedPrompt,
+		&i.Status,
+		&i.Error,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateChatAutomation = `-- name: UpdateChatAutomation :one
+UPDATE
+    chat_automations
+SET
+    name = $1,
+    description = $2,
+    icon = $3,
+    cron_schedule = $4,
+    system_prompt = $5,
+    prompt_template = $6,
+    model_config_id = $7,
+    enabled = $8,
+    max_concurrent_runs = $9,
+    updated_at = NOW()
+WHERE
+    id = $10::uuid
+RETURNING
+    id, owner_id, name, description, icon, trigger_type, webhook_secret, cron_schedule, model_config_id, system_prompt, prompt_template, enabled, max_concurrent_runs, created_at, updated_at
+`
+
+type UpdateChatAutomationParams struct {
+	Name              string         `db:"name" json:"name"`
+	Description       string         `db:"description" json:"description"`
+	Icon              string         `db:"icon" json:"icon"`
+	CronSchedule      sql.NullString `db:"cron_schedule" json:"cron_schedule"`
+	SystemPrompt      string         `db:"system_prompt" json:"system_prompt"`
+	PromptTemplate    string         `db:"prompt_template" json:"prompt_template"`
+	ModelConfigID     uuid.UUID      `db:"model_config_id" json:"model_config_id"`
+	Enabled           bool           `db:"enabled" json:"enabled"`
+	MaxConcurrentRuns int32          `db:"max_concurrent_runs" json:"max_concurrent_runs"`
+	ID                uuid.UUID      `db:"id" json:"id"`
+}
+
+func (q *sqlQuerier) UpdateChatAutomation(ctx context.Context, arg UpdateChatAutomationParams) (ChatAutomation, error) {
+	row := q.db.QueryRowContext(ctx, updateChatAutomation,
+		arg.Name,
+		arg.Description,
+		arg.Icon,
+		arg.CronSchedule,
+		arg.SystemPrompt,
+		arg.PromptTemplate,
+		arg.ModelConfigID,
+		arg.Enabled,
+		arg.MaxConcurrentRuns,
+		arg.ID,
+	)
+	var i ChatAutomation
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Icon,
+		&i.TriggerType,
+		&i.WebhookSecret,
+		&i.CronSchedule,
+		&i.ModelConfigID,
+		&i.SystemPrompt,
+		&i.PromptTemplate,
+		&i.Enabled,
+		&i.MaxConcurrentRuns,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateChatAutomationRun = `-- name: UpdateChatAutomationRun :one
+UPDATE
+    chat_automation_runs
+SET
+    chat_id = COALESCE($1, chat_id),
+    status = $2,
+    error = $3,
+    started_at = $4,
+    completed_at = $5
+WHERE
+    id = $6::uuid
+RETURNING
+    id, automation_id, chat_id, trigger_payload, rendered_prompt, status, error, started_at, completed_at, created_at
+`
+
+type UpdateChatAutomationRunParams struct {
+	ChatID      uuid.NullUUID  `db:"chat_id" json:"chat_id"`
+	Status      string         `db:"status" json:"status"`
+	Error       sql.NullString `db:"error" json:"error"`
+	StartedAt   sql.NullTime   `db:"started_at" json:"started_at"`
+	CompletedAt sql.NullTime   `db:"completed_at" json:"completed_at"`
+	ID          uuid.UUID      `db:"id" json:"id"`
+}
+
+func (q *sqlQuerier) UpdateChatAutomationRun(ctx context.Context, arg UpdateChatAutomationRunParams) (ChatAutomationRun, error) {
+	row := q.db.QueryRowContext(ctx, updateChatAutomationRun,
+		arg.ChatID,
+		arg.Status,
+		arg.Error,
+		arg.StartedAt,
+		arg.CompletedAt,
+		arg.ID,
+	)
+	var i ChatAutomationRun
+	err := row.Scan(
+		&i.ID,
+		&i.AutomationID,
+		&i.ChatID,
+		&i.TriggerPayload,
+		&i.RenderedPrompt,
+		&i.Status,
+		&i.Error,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateChatAutomationWebhookSecret = `-- name: UpdateChatAutomationWebhookSecret :one
+UPDATE
+    chat_automations
+SET
+    webhook_secret = $1,
+    updated_at = NOW()
+WHERE
+    id = $2::uuid
+RETURNING
+    id, owner_id, name, description, icon, trigger_type, webhook_secret, cron_schedule, model_config_id, system_prompt, prompt_template, enabled, max_concurrent_runs, created_at, updated_at
+`
+
+type UpdateChatAutomationWebhookSecretParams struct {
+	WebhookSecret sql.NullString `db:"webhook_secret" json:"webhook_secret"`
+	ID            uuid.UUID      `db:"id" json:"id"`
+}
+
+func (q *sqlQuerier) UpdateChatAutomationWebhookSecret(ctx context.Context, arg UpdateChatAutomationWebhookSecretParams) (ChatAutomation, error) {
+	row := q.db.QueryRowContext(ctx, updateChatAutomationWebhookSecret, arg.WebhookSecret, arg.ID)
+	var i ChatAutomation
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Icon,
+		&i.TriggerType,
+		&i.WebhookSecret,
+		&i.CronSchedule,
+		&i.ModelConfigID,
+		&i.SystemPrompt,
+		&i.PromptTemplate,
+		&i.Enabled,
+		&i.MaxConcurrentRuns,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getChatFileByID = `-- name: GetChatFileByID :one
 SELECT id, owner_id, organization_id, created_at, name, mimetype, data FROM chat_files WHERE id = $1::uuid
 `
@@ -2949,7 +3435,7 @@ WHERE
             $3::int
     )
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, automation_id
 `
 
 type AcquireChatsParams struct {
@@ -2986,6 +3472,7 @@ func (q *sqlQuerier) AcquireChats(ctx context.Context, arg AcquireChatsParams) (
 			&i.Archived,
 			&i.LastError,
 			&i.Mode,
+			&i.AutomationID,
 		); err != nil {
 			return nil, err
 		}
@@ -3189,7 +3676,7 @@ func (q *sqlQuerier) DeleteChatQueuedMessage(ctx context.Context, arg DeleteChat
 
 const getChatByID = `-- name: GetChatByID :one
 SELECT
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, automation_id
 FROM
     chats
 WHERE
@@ -3216,12 +3703,13 @@ func (q *sqlQuerier) GetChatByID(ctx context.Context, id uuid.UUID) (Chat, error
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.AutomationID,
 	)
 	return i, err
 }
 
 const getChatByIDForUpdate = `-- name: GetChatByIDForUpdate :one
-SELECT id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode FROM chats WHERE id = $1::uuid FOR UPDATE
+SELECT id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, automation_id FROM chats WHERE id = $1::uuid FOR UPDATE
 `
 
 func (q *sqlQuerier) GetChatByIDForUpdate(ctx context.Context, id uuid.UUID) (Chat, error) {
@@ -3244,6 +3732,7 @@ func (q *sqlQuerier) GetChatByIDForUpdate(ctx context.Context, id uuid.UUID) (Ch
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.AutomationID,
 	)
 	return i, err
 }
@@ -3949,7 +4438,7 @@ func (q *sqlQuerier) GetChatQueuedMessages(ctx context.Context, chatID uuid.UUID
 
 const getChatsByOwnerID = `-- name: GetChatsByOwnerID :many
 SELECT
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, automation_id
 FROM
     chats
 WHERE
@@ -3958,11 +4447,19 @@ WHERE
         WHEN $2 :: boolean IS NULL THEN true
         ELSE chats.archived = $2 :: boolean
     END
+    -- By default, exclude automation-spawned chats from the normal list.
+    -- When automation_id is explicitly provided, filter to that automation.
+    AND CASE
+        WHEN $3 :: uuid IS NOT NULL THEN
+            chats.automation_id = $3 :: uuid
+        ELSE
+            chats.automation_id IS NULL
+    END
     AND CASE
         -- This allows using the last element on a page as effectively a cursor.
         -- This is an important option for scripts that need to paginate without
         -- duplicating or missing data.
-        WHEN $3 :: uuid != '00000000-0000-0000-0000-000000000000'::uuid THEN (
+        WHEN $4 :: uuid != '00000000-0000-0000-0000-000000000000'::uuid THEN (
             -- The pagination cursor is the last ID of the previous page.
             -- The query is ordered by the updated_at field, so select all
             -- rows before the cursor.
@@ -3972,7 +4469,7 @@ WHERE
                 FROM
                     chats
                 WHERE
-                    id = $3
+                    id = $4
             )
         )
         ELSE true
@@ -3980,25 +4477,27 @@ WHERE
 ORDER BY
     -- Deterministic and consistent ordering of all rows, even if they share
     -- a timestamp. This is to ensure consistent pagination.
-    (updated_at, id) DESC OFFSET $4
+    (updated_at, id) DESC OFFSET $5
 LIMIT
     -- The chat list is unbounded and expected to grow large.
     -- Default to 50 to prevent accidental excessively large queries.
-    COALESCE(NULLIF($5 :: int, 0), 50)
+    COALESCE(NULLIF($6 :: int, 0), 50)
 `
 
 type GetChatsByOwnerIDParams struct {
-	OwnerID   uuid.UUID    `db:"owner_id" json:"owner_id"`
-	Archived  sql.NullBool `db:"archived" json:"archived"`
-	AfterID   uuid.UUID    `db:"after_id" json:"after_id"`
-	OffsetOpt int32        `db:"offset_opt" json:"offset_opt"`
-	LimitOpt  int32        `db:"limit_opt" json:"limit_opt"`
+	OwnerID      uuid.UUID     `db:"owner_id" json:"owner_id"`
+	Archived     sql.NullBool  `db:"archived" json:"archived"`
+	AutomationID uuid.NullUUID `db:"automation_id" json:"automation_id"`
+	AfterID      uuid.UUID     `db:"after_id" json:"after_id"`
+	OffsetOpt    int32         `db:"offset_opt" json:"offset_opt"`
+	LimitOpt     int32         `db:"limit_opt" json:"limit_opt"`
 }
 
 func (q *sqlQuerier) GetChatsByOwnerID(ctx context.Context, arg GetChatsByOwnerIDParams) ([]Chat, error) {
 	rows, err := q.db.QueryContext(ctx, getChatsByOwnerID,
 		arg.OwnerID,
 		arg.Archived,
+		arg.AutomationID,
 		arg.AfterID,
 		arg.OffsetOpt,
 		arg.LimitOpt,
@@ -4027,6 +4526,7 @@ func (q *sqlQuerier) GetChatsByOwnerID(ctx context.Context, arg GetChatsByOwnerI
 			&i.Archived,
 			&i.LastError,
 			&i.Mode,
+			&i.AutomationID,
 		); err != nil {
 			return nil, err
 		}
@@ -4088,7 +4588,7 @@ func (q *sqlQuerier) GetLastChatMessageByRole(ctx context.Context, arg GetLastCh
 
 const getStaleChats = `-- name: GetStaleChats :many
 SELECT
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, automation_id
 FROM
     chats
 WHERE
@@ -4124,6 +4624,7 @@ func (q *sqlQuerier) GetStaleChats(ctx context.Context, staleThreshold time.Time
 			&i.Archived,
 			&i.LastError,
 			&i.Mode,
+			&i.AutomationID,
 		); err != nil {
 			return nil, err
 		}
@@ -4146,7 +4647,8 @@ INSERT INTO chats (
     root_chat_id,
     last_model_config_id,
     title,
-    mode
+    mode,
+    automation_id
 ) VALUES (
     $1::uuid,
     $2::uuid,
@@ -4154,10 +4656,11 @@ INSERT INTO chats (
     $4::uuid,
     $5::uuid,
     $6::text,
-    $7::chat_mode
+    $7::chat_mode,
+    $8::uuid
 )
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, automation_id
 `
 
 type InsertChatParams struct {
@@ -4168,6 +4671,7 @@ type InsertChatParams struct {
 	LastModelConfigID uuid.UUID     `db:"last_model_config_id" json:"last_model_config_id"`
 	Title             string        `db:"title" json:"title"`
 	Mode              NullChatMode  `db:"mode" json:"mode"`
+	AutomationID      uuid.NullUUID `db:"automation_id" json:"automation_id"`
 }
 
 func (q *sqlQuerier) InsertChat(ctx context.Context, arg InsertChatParams) (Chat, error) {
@@ -4179,6 +4683,7 @@ func (q *sqlQuerier) InsertChat(ctx context.Context, arg InsertChatParams) (Chat
 		arg.LastModelConfigID,
 		arg.Title,
 		arg.Mode,
+		arg.AutomationID,
 	)
 	var i Chat
 	err := row.Scan(
@@ -4198,6 +4703,7 @@ func (q *sqlQuerier) InsertChat(ctx context.Context, arg InsertChatParams) (Chat
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.AutomationID,
 	)
 	return i, err
 }
@@ -4378,7 +4884,7 @@ SET
 WHERE
     id = $2::uuid
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, automation_id
 `
 
 type UpdateChatByIDParams struct {
@@ -4406,6 +4912,7 @@ func (q *sqlQuerier) UpdateChatByID(ctx context.Context, arg UpdateChatByIDParam
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.AutomationID,
 	)
 	return i, err
 }
@@ -4493,7 +5000,7 @@ SET
 WHERE
     id = $6::uuid
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, automation_id
 `
 
 type UpdateChatStatusParams struct {
@@ -4532,6 +5039,7 @@ func (q *sqlQuerier) UpdateChatStatus(ctx context.Context, arg UpdateChatStatusP
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.AutomationID,
 	)
 	return i, err
 }
@@ -4545,7 +5053,7 @@ SET
 WHERE
     id = $2::uuid
 RETURNING
-    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode
+    id, owner_id, workspace_id, title, status, worker_id, started_at, heartbeat_at, created_at, updated_at, parent_chat_id, root_chat_id, last_model_config_id, archived, last_error, mode, automation_id
 `
 
 type UpdateChatWorkspaceParams struct {
@@ -4573,6 +5081,7 @@ func (q *sqlQuerier) UpdateChatWorkspace(ctx context.Context, arg UpdateChatWork
 		&i.Archived,
 		&i.LastError,
 		&i.Mode,
+		&i.AutomationID,
 	)
 	return i, err
 }
