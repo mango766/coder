@@ -506,3 +506,107 @@ describe("subscribe", () => {
 		expect(countB).toBe(1);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// beginBatch / endBatch
+// ---------------------------------------------------------------------------
+
+describe("beginBatch / endBatch", () => {
+	it("coalesces multiple mutations into a single subscriber notification", () => {
+		const store = createChatStore();
+		let callCount = 0;
+		store.subscribe(() => {
+			callCount += 1;
+		});
+
+		store.beginBatch();
+		store.setChatStatus("running");
+		store.setStreamError("oops");
+		store.setRetryState({ attempt: 1, error: "rate limited" });
+		store.endBatch();
+
+		expect(callCount).toBe(1);
+	});
+
+	it("emits nothing when no mutations occur inside batch", () => {
+		const store = createChatStore();
+		let callCount = 0;
+		store.subscribe(() => {
+			callCount += 1;
+		});
+
+		store.beginBatch();
+		store.endBatch();
+
+		expect(callCount).toBe(0);
+	});
+
+	it("does not suppress emit when not batching", () => {
+		const store = createChatStore();
+		let callCount = 0;
+		store.subscribe(() => {
+			callCount += 1;
+		});
+
+		store.setChatStatus("running");
+		store.setStreamError("oops");
+
+		expect(callCount).toBe(2);
+	});
+
+	it("handles nested beginBatch / endBatch correctly", () => {
+		const store = createChatStore();
+		let callCount = 0;
+		store.subscribe(() => {
+			callCount += 1;
+		});
+
+		store.beginBatch();
+		store.beginBatch();
+		store.setChatStatus("running");
+		store.endBatch(); // inner
+		expect(callCount).toBe(0);
+
+		store.endBatch(); // outer
+		expect(callCount).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// setCatchUpRenderPending
+// ---------------------------------------------------------------------------
+
+describe("setCatchUpRenderPending", () => {
+	it("sets and clears the flag", () => {
+		const store = createChatStore();
+
+		store.setCatchUpRenderPending(true);
+		expect(store.getSnapshot().catchUpRenderPending).toBe(true);
+
+		store.setCatchUpRenderPending(false);
+		expect(store.getSnapshot().catchUpRenderPending).toBe(false);
+	});
+
+	it("no-ops when setting the same value", () => {
+		const store = createChatStore();
+		let callCount = 0;
+		store.subscribe(() => {
+			callCount += 1;
+		});
+
+		store.setCatchUpRenderPending(true);
+		expect(callCount).toBe(1);
+
+		store.setCatchUpRenderPending(true);
+		expect(callCount).toBe(1);
+	});
+
+	it("resetTransientState clears catchUpRenderPending", () => {
+		const store = createChatStore();
+		store.setCatchUpRenderPending(true);
+
+		store.resetTransientState();
+
+		expect(store.getSnapshot().catchUpRenderPending).toBe(false);
+	});
+});

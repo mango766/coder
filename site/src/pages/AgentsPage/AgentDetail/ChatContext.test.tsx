@@ -36,6 +36,7 @@ import { QueryClient, QueryClientProvider } from "react-query";
 import type { OneWayMessageEvent } from "utils/OneWayWebSocket";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	selectCatchUpRenderPending,
 	selectChatStatus,
 	selectOrderedMessageIDs,
 	selectQueuedMessages,
@@ -2336,6 +2337,822 @@ describe("useChatStore", () => {
 		// IDs not present in the fetched set.
 		await waitFor(() => {
 			expect(result.current.orderedMessageIDs).toEqual([1]);
+		});
+	});
+
+	describe("tab visibility catch-up", () => {
+		it("batches events received while tab was hidden into a single render", async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			immediateAnimationFrame();
+
+			const chatID = "chat-catchup-batch";
+			const existingMessage = makeMessage(chatID, 1, "user", "hello");
+			const mockSocket = createMockSocket();
+			vi.mocked(watchChat).mockReturnValue(mockSocket as never);
+
+			const queryClient = createTestQueryClient();
+			const wrapper = ({ children }: PropsWithChildren) => (
+				<QueryClientProvider client={queryClient}>
+					{children}
+				</QueryClientProvider>
+			);
+			const setChatErrorReason = vi.fn();
+			const clearChatErrorReason = vi.fn();
+
+			const { result } = renderHook(
+				() => {
+					const { store } = useChatStore({
+						chatID,
+						chatMessages: [existingMessage],
+						chatRecord: makeChat(chatID),
+						chatMessagesData: {
+							messages: [existingMessage],
+							queued_messages: [],
+							has_more: false,
+						},
+						chatQueuedMessages: [],
+						setChatErrorReason,
+						clearChatErrorReason,
+					});
+					return {
+						store,
+						streamState: useChatSelector(store, selectStreamState),
+						chatStatus: useChatSelector(store, selectChatStatus),
+					};
+				},
+				{ wrapper },
+			);
+
+			await waitFor(() => {
+				expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			});
+
+			let mockHidden = false;
+			vi.spyOn(document, "hidden", "get").mockImplementation(() => mockHidden);
+
+			// Go hidden then visible to open a catch-up batch.
+			mockHidden = true;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			mockHidden = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			// Attach a subscriber spy to count notifications.
+			const storeRef = result.current.store;
+			let subscriberCalls = 0;
+			const unsub = storeRef.subscribe(() => {
+				subscriberCalls++;
+			});
+
+			// Emit several message_parts during the catch-up
+			// window. In a real browser, these are buffered WS
+			// messages delivered after the visibilitychange event.
+			// During catch-up, emit() is suppressed by the batch
+			// so no subscriber notifications fire yet.
+			mockSocket.emitData({
+				type: "message_part",
+				chat_id: chatID,
+				message_part: {
+					role: "assistant",
+					part: { type: "text", text: "catch" },
+				},
+			});
+			mockSocket.emitData({
+				type: "message_part",
+				chat_id: chatID,
+				message_part: {
+					role: "assistant",
+					part: { type: "text", text: "-up" },
+				},
+			});
+			mockSocket.emitData({
+				type: "message_part",
+				chat_id: chatID,
+				message_part: {
+					role: "assistant",
+					part: { type: "text", text: " text" },
+				},
+			});
+
+			// Subscriber should NOT have been called yet because
+			// the batch suppresses emit.
+			expect(subscriberCalls).toBe(0);
+
+			// Fire the drain timer which ends the batch.
+			await act(async () => {
+				vi.advanceTimersByTime(1);
+			});
+
+			// After drain: the batch ended, producing a small
+			// number of notifications: endBatch fires once, then
+			// RAF fires setCatchUpRenderPending(false) which fires
+			// again. Without batch suppression each emitData call
+			// would trigger its own subscriber notification,
+			// pushing the count well above 3.
+			expect(subscriberCalls).toBeLessThanOrEqual(3);
+
+			// Correctness check: all three parts were applied.
+			// This verifies the mutations landed, not the batch
+			// mechanism (the final state is the same either way).
+			await waitFor(() => {
+				expect(result.current.streamState?.blocks).toEqual([
+					{ type: "response", text: "catch-up text" },
+				]);
+			});
+
+			unsub();
+			vi.useRealTimers();
+		});
+		it("sets catchUpRenderPending for exactly one frame after catch-up", async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+
+			// Controllable RAF: capture the callback instead of
+			// firing it immediately so we can observe the
+			// catchUpRenderPending lifecycle.
+			let capturedRAFCallback: FrameRequestCallback | null = null;
+			vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+				capturedRAFCallback = cb;
+				return 1;
+			});
+			vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+
+			const chatID = "chat-catchup-raf";
+			const existingMessage = makeMessage(chatID, 1, "user", "hello");
+			const mockSocket = createMockSocket();
+			vi.mocked(watchChat).mockReturnValue(mockSocket as never);
+
+			const queryClient = createTestQueryClient();
+			const wrapper = ({ children }: PropsWithChildren) => (
+				<QueryClientProvider client={queryClient}>
+					{children}
+				</QueryClientProvider>
+			);
+			const setChatErrorReason = vi.fn();
+			const clearChatErrorReason = vi.fn();
+
+			const { result } = renderHook(
+				() => {
+					const { store } = useChatStore({
+						chatID,
+						chatMessages: [existingMessage],
+						chatRecord: makeChat(chatID),
+						chatMessagesData: {
+							messages: [existingMessage],
+							queued_messages: [],
+							has_more: false,
+						},
+						chatQueuedMessages: [],
+						setChatErrorReason,
+						clearChatErrorReason,
+					});
+					return {
+						catchUpRenderPending: useChatSelector(
+							store,
+							selectCatchUpRenderPending,
+						),
+						chatStatus: useChatSelector(store, selectChatStatus),
+					};
+				},
+				{ wrapper },
+			);
+
+			await waitFor(() => {
+				expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			});
+
+			// Transition to running so message_parts are accepted.
+			act(() => {
+				mockSocket.emitData({
+					type: "status",
+					chat_id: chatID,
+					status: { status: "running" },
+				});
+			});
+
+			await waitFor(() => {
+				expect(result.current.chatStatus).toBe("running");
+			});
+
+			let mockHidden = false;
+			vi.spyOn(document, "hidden", "get").mockImplementation(() => mockHidden);
+
+			// Go hidden then visible to open the catch-up batch.
+			mockHidden = true;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			mockHidden = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			// Emit an event during the catch-up window so
+			// endCatchUp has work to do.
+			mockSocket.emitData({
+				type: "message_part",
+				chat_id: chatID,
+				message_part: {
+					role: "assistant",
+					part: { type: "text", text: "queued" },
+				},
+			}); // Fire the drain timer.
+			await act(async () => {
+				vi.advanceTimersByTime(0);
+			});
+
+			// After drain: catchUpRenderPending should be true
+			// because the RAF hasn't fired yet.
+			await waitFor(() => {
+				expect(result.current.catchUpRenderPending).toBe(true);
+			});
+
+			// Fire the captured RAF callback.
+			expect(capturedRAFCallback).not.toBeNull();
+			act(() => {
+				capturedRAFCallback!(0);
+			});
+
+			// Now it should be cleared.
+			await waitFor(() => {
+				expect(result.current.catchUpRenderPending).toBe(false);
+			});
+
+			vi.useRealTimers();
+		});
+
+		it("handles rapid hidden-visible-hidden-visible without freezing", async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			immediateAnimationFrame();
+
+			const chatID = "chat-rapid-toggle";
+			const existingMessage = makeMessage(chatID, 1, "user", "hello");
+			const mockSocket = createMockSocket();
+			vi.mocked(watchChat).mockReturnValue(mockSocket as never);
+
+			const queryClient = createTestQueryClient();
+			const wrapper = ({ children }: PropsWithChildren) => (
+				<QueryClientProvider client={queryClient}>
+					{children}
+				</QueryClientProvider>
+			);
+			const setChatErrorReason = vi.fn();
+			const clearChatErrorReason = vi.fn();
+
+			const { result } = renderHook(
+				() => {
+					const { store } = useChatStore({
+						chatID,
+						chatMessages: [existingMessage],
+						chatRecord: makeChat(chatID),
+						chatMessagesData: {
+							messages: [existingMessage],
+							queued_messages: [],
+							has_more: false,
+						},
+						chatQueuedMessages: [],
+						setChatErrorReason,
+						clearChatErrorReason,
+					});
+					return {
+						streamState: useChatSelector(store, selectStreamState),
+						chatStatus: useChatSelector(store, selectChatStatus),
+					};
+				},
+				{ wrapper },
+			);
+
+			await waitFor(() => {
+				expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			});
+
+			// Transition to running.
+			act(() => {
+				mockSocket.emitData({
+					type: "status",
+					chat_id: chatID,
+					status: { status: "running" },
+				});
+			});
+
+			await waitFor(() => {
+				expect(result.current.chatStatus).toBe("running");
+			});
+
+			let mockHidden = false;
+			vi.spyOn(document, "hidden", "get").mockImplementation(() => mockHidden);
+
+			// Rapid toggle: hidden -> visible -> hidden -> visible.
+			mockHidden = true;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			mockHidden = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			mockHidden = true;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			mockHidden = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			// Let all pending drain timers fire.
+			await act(async () => {
+				vi.advanceTimersByTime(0);
+			});
+
+			// Store should still accept events (not frozen in batch
+			// mode). Emit a new message_part and verify it updates.
+			act(() => {
+				mockSocket.emitData({
+					type: "message_part",
+					chat_id: chatID,
+					message_part: {
+						role: "assistant",
+						part: { type: "text", text: "after-toggle" },
+					},
+				});
+			});
+
+			await waitFor(() => {
+				expect(result.current.streamState?.blocks).toEqual([
+					{ type: "response", text: "after-toggle" },
+				]);
+			});
+
+			vi.useRealTimers();
+		});
+
+		it("cleanup during catch-up ends the batch", async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			immediateAnimationFrame();
+
+			const chatID = "chat-catchup-cleanup";
+			const existingMessage = makeMessage(chatID, 1, "user", "hello");
+			const mockSocket = createMockSocket();
+			vi.mocked(watchChat).mockReturnValue(mockSocket as never);
+
+			const queryClient = createTestQueryClient();
+			const wrapper = ({ children }: PropsWithChildren) => (
+				<QueryClientProvider client={queryClient}>
+					{children}
+				</QueryClientProvider>
+			);
+			const setChatErrorReason = vi.fn();
+			const clearChatErrorReason = vi.fn();
+
+			const { result, unmount } = renderHook(
+				() => {
+					const { store } = useChatStore({
+						chatID,
+						chatMessages: [existingMessage],
+						chatRecord: makeChat(chatID),
+						chatMessagesData: {
+							messages: [existingMessage],
+							queued_messages: [],
+							has_more: false,
+						},
+						chatQueuedMessages: [],
+						setChatErrorReason,
+						clearChatErrorReason,
+					});
+					return {
+						store,
+						streamState: useChatSelector(store, selectStreamState),
+						chatStatus: useChatSelector(store, selectChatStatus),
+					};
+				},
+				{ wrapper },
+			);
+
+			await waitFor(() => {
+				expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			});
+
+			// Transition to running.
+			act(() => {
+				mockSocket.emitData({
+					type: "status",
+					chat_id: chatID,
+					status: { status: "running" },
+				});
+			});
+
+			await waitFor(() => {
+				expect(result.current.chatStatus).toBe("running");
+			});
+
+			let mockHidden = false;
+			vi.spyOn(document, "hidden", "get").mockImplementation(() => mockHidden);
+
+			// Go hidden, then visible to open a batch.
+			mockHidden = true;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			mockHidden = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			// Grab the store ref before unmount.
+			const storeRef = result.current.store;
+
+			// Unmount while the batch is still open (drain hasn't
+			// fired). Cleanup should call endBatch.
+			unmount();
+
+			// The store should not be stuck in batch mode. Verify
+			// by subscribing and checking that a mutation triggers
+			// the subscriber.
+			let subscriberCalled = false;
+			const unsub = storeRef.subscribe(() => {
+				subscriberCalled = true;
+			});
+
+			// Mutate the store directly to test that emit works.
+			storeRef.setChatStatus("completed");
+			expect(subscriberCalled).toBe(true);
+
+			unsub();
+			vi.useRealTimers();
+		});
+
+		it("catch-up with no queued messages is a no-op", async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			immediateAnimationFrame();
+
+			const chatID = "chat-catchup-noop";
+			const existingMessage = makeMessage(chatID, 1, "user", "hello");
+			const mockSocket = createMockSocket();
+			vi.mocked(watchChat).mockReturnValue(mockSocket as never);
+
+			const queryClient = createTestQueryClient();
+			const wrapper = ({ children }: PropsWithChildren) => (
+				<QueryClientProvider client={queryClient}>
+					{children}
+				</QueryClientProvider>
+			);
+			const setChatErrorReason = vi.fn();
+			const clearChatErrorReason = vi.fn();
+
+			const { result } = renderHook(
+				() => {
+					const { store } = useChatStore({
+						chatID,
+						chatMessages: [existingMessage],
+						chatRecord: makeChat(chatID),
+						chatMessagesData: {
+							messages: [existingMessage],
+							queued_messages: [],
+							has_more: false,
+						},
+						chatQueuedMessages: [],
+						setChatErrorReason,
+						clearChatErrorReason,
+					});
+					return {
+						streamState: useChatSelector(store, selectStreamState),
+						orderedMessageIDs: useChatSelector(store, selectOrderedMessageIDs),
+						chatStatus: useChatSelector(store, selectChatStatus),
+					};
+				},
+				{ wrapper },
+			);
+
+			await waitFor(() => {
+				expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			});
+
+			let mockHidden = false;
+			vi.spyOn(document, "hidden", "get").mockImplementation(() => mockHidden);
+
+			// Snapshot state before the cycle.
+			const stateBefore = {
+				streamState: result.current.streamState,
+				orderedMessageIDs: result.current.orderedMessageIDs,
+				chatStatus: result.current.chatStatus,
+			};
+
+			// Go hidden then visible with no events in between.
+			mockHidden = true;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			mockHidden = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			// Fire the drain.
+			await act(async () => {
+				vi.advanceTimersByTime(0);
+			});
+
+			// State should be unchanged — the cycle was a no-op.
+			expect(result.current.streamState).toBe(stateBefore.streamState);
+			expect(result.current.orderedMessageIDs).toEqual(
+				stateBefore.orderedMessageIDs,
+			);
+			expect(result.current.chatStatus).toBe(stateBefore.chatStatus);
+
+			// Verify the store still works normally after the
+			// no-op catch-up: the batch opened and closed
+			// correctly, so a subsequent message_part renders.
+			act(() => {
+				mockSocket.emitData({
+					type: "message_part",
+					chat_id: chatID,
+					message_part: {
+						role: "assistant",
+						part: { type: "text", text: "after-noop" },
+					},
+				});
+			});
+
+			await waitFor(() => {
+				expect(result.current.streamState?.blocks).toEqual([
+					{ type: "response", text: "after-noop" },
+				]);
+			});
+
+			vi.useRealTimers();
+		});
+
+		it("resolves pending stream reset across turn boundaries during catch-up", async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			immediateAnimationFrame();
+
+			const chatID = "chat-catchup-turn-boundary";
+			const existingMessage = makeMessage(chatID, 1, "user", "hello");
+			const mockSocket = createMockSocket();
+			vi.mocked(watchChat).mockReturnValue(mockSocket as never);
+
+			const queryClient = createTestQueryClient();
+			const wrapper = ({ children }: PropsWithChildren) => (
+				<QueryClientProvider client={queryClient}>
+					{children}
+				</QueryClientProvider>
+			);
+			const setChatErrorReason = vi.fn();
+			const clearChatErrorReason = vi.fn();
+
+			const { result } = renderHook(
+				() => {
+					const { store } = useChatStore({
+						chatID,
+						chatMessages: [existingMessage],
+						chatRecord: makeChat(chatID),
+						chatMessagesData: {
+							messages: [existingMessage],
+							queued_messages: [],
+							has_more: false,
+						},
+						chatQueuedMessages: [],
+						setChatErrorReason,
+						clearChatErrorReason,
+					});
+					return {
+						streamState: useChatSelector(store, selectStreamState),
+						chatStatus: useChatSelector(store, selectChatStatus),
+					};
+				},
+				{ wrapper },
+			);
+
+			await waitFor(() => {
+				expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			});
+
+			// Transition to running so message_parts are accepted.
+			act(() => {
+				mockSocket.emitData({
+					type: "status",
+					chat_id: chatID,
+					status: { status: "running" },
+				});
+			});
+
+			await waitFor(() => {
+				expect(result.current.chatStatus).toBe("running");
+			});
+
+			let mockHidden = false;
+			vi.spyOn(document, "hidden", "get").mockImplementation(() => mockHidden);
+
+			// Go hidden then visible to open the catch-up batch.
+			mockHidden = true;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			mockHidden = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			// Turn 1: stream some parts then complete the turn
+			// with a durable message.
+			mockSocket.emitData({
+				type: "message_part",
+				chat_id: chatID,
+				message_part: {
+					role: "assistant",
+					part: { type: "text", text: "turn one text" },
+				},
+			});
+
+			// Durable message completes turn 1. This sets
+			// catchUpPendingReset = true because changed is true.
+			const turnOneMessage = makeMessage(
+				chatID,
+				2,
+				"assistant",
+				"turn one text",
+			);
+			mockSocket.emitData({
+				type: "message",
+				chat_id: chatID,
+				message: turnOneMessage,
+			});
+
+			// Turn 2: new parts arrive. The pending reset should
+			// clear stream state before applying these.
+			mockSocket.emitData({
+				type: "message_part",
+				chat_id: chatID,
+				message_part: {
+					role: "assistant",
+					part: { type: "text", text: "turn two text" },
+				},
+			});
+
+			// Fire the drain timer.
+			await act(async () => {
+				vi.advanceTimersByTime(1);
+			});
+
+			// Stream state should contain only turn two text.
+			// Without catchUpPendingReset, turn one text would
+			// be concatenated with turn two text.
+			await waitFor(() => {
+				expect(result.current.streamState?.blocks).toEqual([
+					{ type: "response", text: "turn two text" },
+				]);
+			});
+
+			vi.useRealTimers();
+		});
+
+		it("cancels stale stream reset RAF when tab becomes visible", async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+
+			// Controllable RAF: capture all callbacks with their
+			// IDs so we can simulate cancellation. Multiple RAFs
+			// are scheduled: scheduleStreamReset creates one,
+			// endCatchUp creates another for catchUpRenderPending.
+			const capturedRAFs: Array<{
+				id: number;
+				cb: FrameRequestCallback;
+				cancelled: boolean;
+			}> = [];
+			let nextRAFId = 1;
+			vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+				const id = nextRAFId++;
+				capturedRAFs.push({ id, cb, cancelled: false });
+				return id;
+			});
+			vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+				for (const raf of capturedRAFs) {
+					if (raf.id === id) {
+						raf.cancelled = true;
+					}
+				}
+			});
+
+			const chatID = "chat-stale-raf";
+			const existingMessage = makeMessage(chatID, 1, "user", "hello");
+			const mockSocket = createMockSocket();
+			vi.mocked(watchChat).mockReturnValue(mockSocket as never);
+
+			const queryClient = createTestQueryClient();
+			const wrapper = ({ children }: PropsWithChildren) => (
+				<QueryClientProvider client={queryClient}>
+					{children}
+				</QueryClientProvider>
+			);
+			const setChatErrorReason = vi.fn();
+			const clearChatErrorReason = vi.fn();
+
+			const { result } = renderHook(
+				() => {
+					const { store } = useChatStore({
+						chatID,
+						chatMessages: [existingMessage],
+						chatRecord: makeChat(chatID),
+						chatMessagesData: {
+							messages: [existingMessage],
+							queued_messages: [],
+							has_more: false,
+						},
+						chatQueuedMessages: [],
+						setChatErrorReason,
+						clearChatErrorReason,
+					});
+					return {
+						streamState: useChatSelector(store, selectStreamState),
+						chatStatus: useChatSelector(store, selectChatStatus),
+					};
+				},
+				{ wrapper },
+			);
+
+			await waitFor(() => {
+				expect(watchChat).toHaveBeenCalledWith(chatID, 1);
+			});
+
+			// Transition to running so message_parts are accepted.
+			act(() => {
+				mockSocket.emitData({
+					type: "status",
+					chat_id: chatID,
+					status: { status: "running" },
+				});
+			});
+
+			await waitFor(() => {
+				expect(result.current.chatStatus).toBe("running");
+			});
+
+			// Emit a message_part followed by a durable message
+			// with changed=true. This schedules a stream reset
+			// via scheduleStreamReset (a RAF).
+			act(() => {
+				mockSocket.emitData({
+					type: "message_part",
+					chat_id: chatID,
+					message_part: {
+						role: "assistant",
+						part: { type: "text", text: "old text" },
+					},
+				});
+			});
+
+			await waitFor(() => {
+				expect(result.current.streamState?.blocks).toEqual([
+					{ type: "response", text: "old text" },
+				]);
+			});
+
+			act(() => {
+				const durableMsg = makeMessage(chatID, 2, "assistant", "old text");
+				mockSocket.emitData({
+					type: "message",
+					chat_id: chatID,
+					message: durableMsg,
+				});
+			});
+
+			// A RAF for scheduleStreamReset is now pending.
+			// Snapshot the count before the visibility cycle.
+			const rafCountBeforeVisibility = capturedRAFs.length;
+
+			let mockHidden = false;
+			vi.spyOn(document, "hidden", "get").mockImplementation(() => mockHidden);
+
+			// Go hidden then visible. This enters catch-up and
+			// calls cancelScheduledStreamReset.
+			mockHidden = true;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			mockHidden = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+
+			// Emit new parts during catch-up.
+			mockSocket.emitData({
+				type: "message_part",
+				chat_id: chatID,
+				message_part: {
+					role: "assistant",
+					part: { type: "text", text: "new text" },
+				},
+			});
+
+			// Fire the drain timer.
+			await act(async () => {
+				vi.advanceTimersByTime(1);
+			});
+
+			await waitFor(() => {
+				expect(result.current.streamState?.blocks).toEqual([
+					{ type: "response", text: "old textnew text" },
+				]);
+			});
+
+			// Now fire the stale RAF callbacks that were captured
+			// before the visibility change. Cancelled RAFs are
+			// skipped (simulating browser cancelAnimationFrame).
+			// Without cancelScheduledStreamReset, the RAF would
+			// fire and call clearStreamState, wiping everything.
+			act(() => {
+				for (let i = 0; i < rafCountBeforeVisibility; i++) {
+					if (!capturedRAFs[i].cancelled) {
+						capturedRAFs[i].cb(0);
+					}
+				}
+			});
+
+			// Stream state should still be intact.
+			expect(result.current.streamState?.blocks).toEqual([
+				{ type: "response", text: "old textnew text" },
+			]);
+
+			vi.useRealTimers();
 		});
 	});
 });
