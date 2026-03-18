@@ -85,12 +85,14 @@ type Server struct {
 
 	subscribeFn SubscribeFn
 
-	agentConnFn       AgentConnFunc
-	createWorkspaceFn chattool.CreateWorkspaceFn
-	startWorkspaceFn  chattool.StartWorkspaceFn
-	pubsub            pubsub.Pubsub
-	webpushDispatcher webpush.Dispatcher
-	providerAPIKeys   chatprovider.ProviderAPIKeys
+	agentConnFn            AgentConnFunc
+	createWorkspaceFn      chattool.CreateWorkspaceFn
+	startWorkspaceFn       chattool.StartWorkspaceFn
+	pubsub                 pubsub.Pubsub
+	webpushDispatcher      webpush.Dispatcher
+	providerAPIKeys        chatprovider.ProviderAPIKeys
+	configCache            *chatConfigCache
+	configCacheUnsubscribe func()
 
 	// chatStreams stores per-chat stream state. Using sync.Map
 	// gives each chat independent locking — concurrent chats
@@ -1366,8 +1368,33 @@ func New(cfg Config) *Server {
 		clock:                      clk,
 	}
 
+	p.configCache = newChatConfigCache(cfg.Database, clk)
+
 	//nolint:gocritic // The chat processor uses a scoped chatd context.
 	ctx = dbauthz.AsChatd(ctx)
+	if p.pubsub != nil {
+		cancelConfigSub, err := p.pubsub.SubscribeWithErr(
+			coderdpubsub.ChatConfigEventChannel,
+			coderdpubsub.HandleChatConfigEvent(func(ctx context.Context, ev coderdpubsub.ChatConfigEvent, err error) {
+				if err != nil {
+					p.logger.Warn(ctx, "chat config event error", slog.Error(err))
+					return
+				}
+				switch ev.Kind {
+				case coderdpubsub.ChatConfigEventProviders:
+					p.configCache.InvalidateProviders()
+				case coderdpubsub.ChatConfigEventModelConfig:
+					p.configCache.InvalidateModelConfig(ev.EntityID)
+				case coderdpubsub.ChatConfigEventUserPrompt:
+					p.configCache.InvalidateUserPrompt(ev.EntityID)
+				}
+			}),
+		)
+		if err != nil {
+			p.logger.Error(ctx, "subscribe to chat config events", slog.Error(err))
+		}
+		p.configCacheUnsubscribe = cancelConfigSub
+	}
 	go p.start(ctx)
 
 	return p
@@ -3368,7 +3395,7 @@ func (p *Server) resolveChatModel(
 	})
 	g.Go(func() error {
 		var err error
-		providers, err = p.db.GetEnabledChatProviders(ctx)
+		providers, err = p.configCache.EnabledProviders(ctx)
 		if err != nil {
 			return xerrors.Errorf("get enabled chat providers: %w", err)
 		}
@@ -3411,7 +3438,7 @@ func (p *Server) resolveModelConfig(
 	chat database.Chat,
 ) (database.ChatModelConfig, error) {
 	if chat.LastModelConfigID != uuid.Nil {
-		modelConfig, err := p.db.GetChatModelConfigByID(
+		modelConfig, err := p.configCache.ModelConfigByID(
 			ctx, chat.LastModelConfigID,
 		)
 		if err == nil {
@@ -3426,7 +3453,7 @@ func (p *Server) resolveModelConfig(
 		// Model config was deleted, fall through to default.
 	}
 
-	defaultConfig, err := p.db.GetDefaultChatModelConfig(ctx)
+	defaultConfig, err := p.configCache.DefaultModelConfig(ctx)
 	if err != nil {
 		if xerrors.Is(err, sql.ErrNoRows) {
 			return database.ChatModelConfig{}, xerrors.New(
@@ -3543,7 +3570,7 @@ func (p *Server) resolveInstructions(
 // database and wraps it in <user-instructions> tags. Returns empty
 // string if no prompt is set.
 func (p *Server) resolveUserPrompt(ctx context.Context, userID uuid.UUID) string {
-	raw, err := p.db.GetUserChatCustomPrompt(ctx, userID)
+	raw, err := p.configCache.UserPrompt(ctx, userID)
 	if err != nil {
 		// sql.ErrNoRows is the normal "not set" case.
 		return ""
@@ -3707,5 +3734,8 @@ func (p *Server) Close() error {
 	p.cancel()
 	<-p.closed
 	p.inflight.Wait()
+	if p.configCacheUnsubscribe != nil {
+		p.configCacheUnsubscribe()
+	}
 	return nil
 }
