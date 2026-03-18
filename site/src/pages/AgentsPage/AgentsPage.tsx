@@ -263,12 +263,23 @@ const AgentsPage: FC = () => {
 		[isArchiving, archiveAgentMutation],
 	);
 	const requestArchiveAndDeleteWorkspace = useCallback(
-		(chatId: string, workspaceId: string) => {
+		(chatId: string, workspaceId: string, needsConfirmation: boolean) => {
 			if (!isArchiving) {
-				setPendingArchiveAndDelete({ chatId, workspaceId });
+				if (needsConfirmation) {
+					setPendingArchiveAndDelete({ chatId, workspaceId });
+				} else {
+					archiveAndDeleteMutation.mutate(
+						{ chatId, workspaceId },
+						{
+							onSettled: () => {
+								navigate("/agents");
+							},
+						},
+					);
+				}
 			}
 		},
-		[isArchiving],
+		[isArchiving, archiveAndDeleteMutation, navigate],
 	);
 	const handleConfirmArchiveAndDelete = useCallback(() => {
 		if (pendingArchiveAndDelete && !isArchiving) {
@@ -502,16 +513,13 @@ const AgentsPage: FC = () => {
 	const pendingWorkspaceQuery = useQuery({
 		...workspaceById(pendingArchiveAndDelete?.workspaceId ?? ""),
 		enabled: Boolean(pendingArchiveAndDelete?.workspaceId),
-	});
-	const pendingWorkspaceName = pendingWorkspaceQuery.data?.name ?? "";
-
-	useEffect(() => {
-		if (pendingWorkspaceQuery.isError && pendingArchiveAndDelete) {
+		throwOnError: () => {
 			toast.error("Failed to look up workspace for deletion.");
 			setPendingArchiveAndDelete(null);
-		}
-	}, [pendingWorkspaceQuery.isError, pendingArchiveAndDelete]);
-
+			return false;
+		},
+	});
+	const pendingWorkspaceName = pendingWorkspaceQuery.data?.name ?? "";
 	return (
 		<AgentsPageView
 			agentId={agentId}
