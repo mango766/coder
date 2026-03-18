@@ -3748,7 +3748,7 @@ export interface MCPServerConfig {
 	/**
 	 * Per-user state (populated for non-admin requests).
 	 */
-	readonly auth_connected?: boolean;
+	readonly auth_connected: boolean;
 }
 
 // From codersdk/mcp.go
