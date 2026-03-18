@@ -5,8 +5,10 @@ import {
 	chatDesktopEnabled,
 	chatSystemPrompt,
 	chatUserCustomPrompt,
+	chatWorkspaceTTL,
 	updateChatDesktopEnabled,
 	updateChatSystemPrompt,
+	updateChatWorkspaceTTL,
 	updateUserChatCustomPrompt,
 } from "api/queries/chats";
 import type * as TypesGen from "api/typesGenerated";
@@ -366,6 +368,13 @@ export const SettingsPageContent: FC<SettingsPageContentProps> = ({
 		isError: isSaveDesktopEnabledError,
 	} = useMutation(updateChatDesktopEnabled(queryClient));
 
+	const workspaceTTLQuery = useQuery(chatWorkspaceTTL());
+	const {
+		mutate: saveWorkspaceTTL,
+		isPending: isSavingWorkspaceTTL,
+		isError: isSaveWorkspaceTTLError,
+	} = useMutation(updateChatWorkspaceTTL(queryClient));
+
 	const serverPrompt = systemPromptQuery.data?.system_prompt ?? "";
 	const [localEdit, setLocalEdit] = useState<string | null>(null);
 	const systemPromptDraft = localEdit ?? serverPrompt;
@@ -378,8 +387,17 @@ export const SettingsPageContent: FC<SettingsPageContentProps> = ({
 	const isUserPromptDirty =
 		localUserEdit !== null && localUserEdit !== serverUserPrompt;
 	const desktopEnabled = desktopEnabledQuery.data?.enable_desktop ?? false;
+	const serverWorkspaceTTLHours =
+		(workspaceTTLQuery.data?.workspace_ttl_ms ?? 3600000) / 3600000;
+	const [localTTLEdit, setLocalTTLEdit] = useState<number | null>(null);
+	const workspaceTTLHours = localTTLEdit ?? serverWorkspaceTTLHours;
+	const isTTLDirty =
+		localTTLEdit !== null && localTTLEdit !== serverWorkspaceTTLHours;
 	const isDisabled =
-		isSavingSystemPrompt || isSavingUserPrompt || isSavingDesktopEnabled;
+		isSavingSystemPrompt ||
+		isSavingUserPrompt ||
+		isSavingDesktopEnabled ||
+		isSavingWorkspaceTTL;
 
 	const handleSaveSystemPrompt = useCallback(
 		(event: FormEvent) => {
@@ -403,6 +421,18 @@ export const SettingsPageContent: FC<SettingsPageContentProps> = ({
 			);
 		},
 		[isUserPromptDirty, userPromptDraft, saveUserPrompt],
+	);
+
+	const handleSaveWorkspaceTTL = useCallback(
+		(event: FormEvent) => {
+			event.preventDefault();
+			if (!isTTLDirty) return;
+			saveWorkspaceTTL(
+				{ workspace_ttl_ms: Math.round(workspaceTTLHours * 3600000) },
+				{ onSuccess: () => setLocalTTLEdit(null) },
+			);
+		},
+		[isTTLDirty, workspaceTTLHours, saveWorkspaceTTL],
 	);
 
 	return (
@@ -551,6 +581,55 @@ export const SettingsPageContent: FC<SettingsPageContentProps> = ({
 										</p>
 									)}
 								</div>
+								<hr className="my-5 border-0 border-t border-solid border-border" />
+								<form
+									className="space-y-2"
+									onSubmit={(event) => void handleSaveWorkspaceTTL(event)}
+								>
+									<div className="flex items-center gap-2">
+										<h3 className="m-0 text-[13px] font-semibold text-content-primary">
+											Workspace Lifetime
+										</h3>
+										<AdminBadge />
+									</div>
+									<p className="!mt-0.5 m-0 text-xs text-content-secondary">
+										How long chat workspaces stay running after creation. Set to
+										0 to use the template&apos;s default TTL.
+									</p>
+									<div className="flex items-center gap-2">
+										<input
+											type="number"
+											min={0}
+											step={1}
+											value={workspaceTTLHours}
+											onChange={(e) => {
+												const hours = Number.parseFloat(e.target.value);
+												if (!Number.isNaN(hours) && hours >= 0) {
+													setLocalTTLEdit(hours);
+												}
+											}}
+											disabled={isDisabled}
+											className="h-8 w-20 rounded border border-border bg-surface-primary px-2 text-sm text-content-primary"
+										/>
+										<span className="text-xs text-content-secondary">
+											hours
+										</span>
+									</div>
+									<div className="flex justify-end">
+										<Button
+											size="sm"
+											type="submit"
+											disabled={isDisabled || !isTTLDirty}
+										>
+											Save
+										</Button>
+									</div>
+									{isSaveWorkspaceTTLError && (
+										<p className="m-0 text-xs text-content-destructive">
+											Failed to save workspace lifetime setting.
+										</p>
+									)}
+								</form>
 							</>
 						)}
 					</>

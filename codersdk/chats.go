@@ -356,6 +356,18 @@ type UpdateChatDesktopEnabledRequest struct {
 	EnableDesktop bool `json:"enable_desktop"`
 }
 
+// ChatWorkspaceTTLResponse is the response for getting the chat
+// workspace TTL setting.
+type ChatWorkspaceTTLResponse struct {
+	WorkspaceTTLMs int64 `json:"workspace_ttl_ms"`
+}
+
+// UpdateChatWorkspaceTTLRequest is the request to update the chat
+// workspace TTL setting.
+type UpdateChatWorkspaceTTLRequest struct {
+	WorkspaceTTLMs int64 `json:"workspace_ttl_ms"`
+}
+
 // ChatProviderConfigSource describes how a provider entry is sourced.
 type ChatProviderConfigSource string
 
@@ -1323,6 +1335,33 @@ func (c *Client) GetChatDesktopEnabled(ctx context.Context) (ChatDesktopEnabledR
 // UpdateChatDesktopEnabled updates the deployment-wide desktop setting.
 func (c *Client) UpdateChatDesktopEnabled(ctx context.Context, req UpdateChatDesktopEnabledRequest) error {
 	res, err := c.Request(ctx, http.MethodPut, "/api/experimental/chats/config/desktop-enabled", req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		return ReadBodyAsError(res)
+	}
+	return nil
+}
+
+// GetChatWorkspaceTTL returns the configured chat workspace TTL.
+func (c *Client) GetChatWorkspaceTTL(ctx context.Context) (ChatWorkspaceTTLResponse, error) {
+	res, err := c.Request(ctx, http.MethodGet, "/api/experimental/chats/config/workspace-ttl", nil)
+	if err != nil {
+		return ChatWorkspaceTTLResponse{}, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return ChatWorkspaceTTLResponse{}, ReadBodyAsError(res)
+	}
+	var resp ChatWorkspaceTTLResponse
+	return resp, json.NewDecoder(res.Body).Decode(&resp)
+}
+
+// UpdateChatWorkspaceTTL updates the chat workspace TTL setting.
+func (c *Client) UpdateChatWorkspaceTTL(ctx context.Context, req UpdateChatWorkspaceTTLRequest) error {
+	res, err := c.Request(ctx, http.MethodPut, "/api/experimental/chats/config/workspace-ttl", req)
 	if err != nil {
 		return err
 	}

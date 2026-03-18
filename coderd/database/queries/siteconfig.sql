@@ -160,3 +160,19 @@ SET value = CASE
     ELSE 'false'
 END
 WHERE site_configs.key = 'agents_desktop_enabled';
+
+-- name: GetChatWorkspaceTTL :one
+-- Returns the global TTL for chat workspaces in nanoseconds.
+-- Default: 3600000000000 (1 hour).
+SELECT
+    COALESCE(
+        (SELECT value::bigint FROM site_configs WHERE key = 'agents_workspace_ttl'),
+        3600000000000
+    )::bigint AS workspace_ttl;
+
+-- name: UpsertChatWorkspaceTTL :exec
+INSERT INTO site_configs (key, value)
+VALUES ('agents_workspace_ttl', sqlc.arg(workspace_ttl)::bigint::text)
+ON CONFLICT (key) DO UPDATE
+SET value = sqlc.arg(workspace_ttl)::bigint::text
+WHERE site_configs.key = 'agents_workspace_ttl';

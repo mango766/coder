@@ -2652,6 +2652,16 @@ func (q *querier) GetChatUsageLimitUserOverride(ctx context.Context, userID uuid
 	return q.db.GetChatUsageLimitUserOverride(ctx, userID)
 }
 
+func (q *querier) GetChatWorkspaceTTL(ctx context.Context) (int64, error) {
+	// The workspace-TTL setting is a deployment-wide value read by any
+	// authenticated chat user. We only require that an explicit actor is
+	// present in the context so unauthenticated calls fail closed.
+	if _, ok := ActorFromContext(ctx); !ok {
+		return 0, ErrNoActor
+	}
+	return q.db.GetChatWorkspaceTTL(ctx)
+}
+
 func (q *querier) GetChats(ctx context.Context, arg database.GetChatsParams) ([]database.Chat, error) {
 	prep, err := prepareSQLFilter(ctx, q.auth, policy.ActionRead, rbac.ResourceChat.Type)
 	if err != nil {
@@ -6658,6 +6668,14 @@ func (q *querier) UpsertChatUsageLimitUserOverride(ctx context.Context, arg data
 		return database.UpsertChatUsageLimitUserOverrideRow{}, err
 	}
 	return q.db.UpsertChatUsageLimitUserOverride(ctx, arg)
+}
+
+//nolint:revive // Parameter name matches the generated querier interface.
+func (q *querier) UpsertChatWorkspaceTTL(ctx context.Context, workspaceTtl int64) error {
+	if err := q.authorizeContext(ctx, policy.ActionUpdate, rbac.ResourceDeploymentConfig); err != nil {
+		return err
+	}
+	return q.db.UpsertChatWorkspaceTTL(ctx, workspaceTtl)
 }
 
 func (q *querier) UpsertConnectionLog(ctx context.Context, arg database.UpsertConnectionLogParams) (database.ConnectionLog, error) {

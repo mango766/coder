@@ -1939,6 +1939,15 @@ export interface ChatUsageLimitStatus {
 	readonly period_end?: string;
 }
 
+// From codersdk/chats.go
+/**
+ * ChatWorkspaceTTLResponse is the response for getting the chat
+ * workspace TTL setting.
+ */
+export interface ChatWorkspaceTTLResponse {
+	readonly workspace_ttl_ms: number;
+}
+
 // From codersdk/client.go
 /**
  * CoderDesktopTelemetryHeader contains a JSON-encoded representation of Desktop telemetry
@@ -6793,6 +6802,15 @@ export interface UpdateChatUsageLimitGroupOverrideRequest {
  */
 export interface UpdateChatUsageLimitOverrideRequest {
 	readonly spend_limit_micros: number; // Must be greater than 0.
+}
+
+// From codersdk/chats.go
+/**
+ * UpdateChatWorkspaceTTLRequest is the request to update the chat
+ * workspace TTL setting.
+ */
+export interface UpdateChatWorkspaceTTLRequest {
+	readonly workspace_ttl_ms: number;
 }
 
 // From codersdk/updatecheck.go

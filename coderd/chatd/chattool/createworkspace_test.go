@@ -2,14 +2,21 @@ package chattool //nolint:testpackage // Uses internal symbols.
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
+	"charm.land/fantasy"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"golang.org/x/xerrors"
 
+	"cdr.dev/slog/v3/sloggers/slogtest"
 	"github.com/coder/coder/v2/coderd/database"
 	"github.com/coder/coder/v2/coderd/database/dbmock"
+	"github.com/coder/coder/v2/codersdk"
 	"github.com/coder/coder/v2/codersdk/workspacesdk"
 )
 
@@ -106,6 +113,235 @@ func TestWaitForAgentReady(t *testing.T) {
 
 		result := waitForAgentReady(context.Background(), nil, uuid.New(), connFn)
 		require.Empty(t, result)
+	})
+}
+
+func TestCreateWorkspace_GlobalTTL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("PositiveTTL", func(t *testing.T) {
+		t.Parallel()
+		ctrl := gomock.NewController(t)
+		db := dbmock.NewMockStore(ctrl)
+
+		ownerID := uuid.New()
+		templateID := uuid.New()
+		workspaceID := uuid.New()
+		jobID := uuid.New()
+
+		// asOwner calls GetAuthorizationUserRoles; return an
+		// empty-role user so rolestore.Expand skips DB lookups.
+		db.EXPECT().
+			GetAuthorizationUserRoles(gomock.Any(), ownerID).
+			Return(database.GetAuthorizationUserRolesRow{
+				ID:     ownerID,
+				Roles:  []string{},
+				Groups: []string{},
+				Status: database.UserStatusActive,
+			}, nil)
+
+		// Return a 2-hour TTL in nanoseconds.
+		twoHoursNs := int64(2 * time.Hour)
+		db.EXPECT().
+			GetChatWorkspaceTTL(gomock.Any()).
+			Return(twoHoursNs, nil)
+
+		// waitForBuild polls the build; return a succeeded job.
+		db.EXPECT().
+			GetLatestWorkspaceBuildByWorkspaceID(gomock.Any(), workspaceID).
+			Return(database.WorkspaceBuild{
+				WorkspaceID: workspaceID,
+				JobID:       jobID,
+			}, nil)
+		db.EXPECT().
+			GetProvisionerJobByID(gomock.Any(), jobID).
+			Return(database.ProvisionerJob{
+				ID:        jobID,
+				JobStatus: database.ProvisionerJobStatusSucceeded,
+			}, nil)
+
+		// Return no agents so waitForAgentReady is skipped.
+		db.EXPECT().
+			GetWorkspaceAgentsInLatestBuildByWorkspaceID(gomock.Any(), workspaceID).
+			Return([]database.WorkspaceAgent{}, nil)
+
+		var capturedReq codersdk.CreateWorkspaceRequest
+		createFn := func(_ context.Context, _ uuid.UUID, req codersdk.CreateWorkspaceRequest) (codersdk.Workspace, error) {
+			capturedReq = req
+			return codersdk.Workspace{
+				ID:        workspaceID,
+				Name:      req.Name,
+				OwnerName: "testuser",
+			}, nil
+		}
+
+		tool := CreateWorkspace(CreateWorkspaceOptions{
+			DB:          db,
+			OwnerID:     ownerID,
+			ChatID:      uuid.Nil, // Skip existing-workspace check.
+			CreateFn:    createFn,
+			WorkspaceMu: &sync.Mutex{},
+		})
+
+		input := fmt.Sprintf(`{"template_id":%q,"name":"test-ws"}`, templateID.String())
+		resp, err := tool.Run(context.Background(), fantasy.ToolCall{
+			ID:    "call-1",
+			Name:  "create_workspace",
+			Input: input,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, resp.Content)
+
+		// 2 hours = 7200000 ms.
+		expectedMs := int64(2 * time.Hour / time.Millisecond)
+		require.NotNil(t, capturedReq.TTLMillis)
+		require.Equal(t, expectedMs, *capturedReq.TTLMillis)
+	})
+
+	t.Run("ZeroTTLUsesTemplateDefault", func(t *testing.T) {
+		t.Parallel()
+		ctrl := gomock.NewController(t)
+		db := dbmock.NewMockStore(ctrl)
+
+		ownerID := uuid.New()
+		templateID := uuid.New()
+		workspaceID := uuid.New()
+		jobID := uuid.New()
+
+		db.EXPECT().
+			GetAuthorizationUserRoles(gomock.Any(), ownerID).
+			Return(database.GetAuthorizationUserRolesRow{
+				ID:     ownerID,
+				Roles:  []string{},
+				Groups: []string{},
+				Status: database.UserStatusActive,
+			}, nil)
+
+		// Zero means "use the template default".
+		db.EXPECT().
+			GetChatWorkspaceTTL(gomock.Any()).
+			Return(int64(0), nil)
+
+		db.EXPECT().
+			GetLatestWorkspaceBuildByWorkspaceID(gomock.Any(), workspaceID).
+			Return(database.WorkspaceBuild{
+				WorkspaceID: workspaceID,
+				JobID:       jobID,
+			}, nil)
+		db.EXPECT().
+			GetProvisionerJobByID(gomock.Any(), jobID).
+			Return(database.ProvisionerJob{
+				ID:        jobID,
+				JobStatus: database.ProvisionerJobStatusSucceeded,
+			}, nil)
+
+		db.EXPECT().
+			GetWorkspaceAgentsInLatestBuildByWorkspaceID(gomock.Any(), workspaceID).
+			Return([]database.WorkspaceAgent{}, nil)
+
+		var capturedReq codersdk.CreateWorkspaceRequest
+		createFn := func(_ context.Context, _ uuid.UUID, req codersdk.CreateWorkspaceRequest) (codersdk.Workspace, error) {
+			capturedReq = req
+			return codersdk.Workspace{
+				ID:        workspaceID,
+				Name:      req.Name,
+				OwnerName: "testuser",
+			}, nil
+		}
+
+		tool := CreateWorkspace(CreateWorkspaceOptions{
+			DB:          db,
+			OwnerID:     ownerID,
+			ChatID:      uuid.Nil,
+			CreateFn:    createFn,
+			WorkspaceMu: &sync.Mutex{},
+		})
+
+		input := fmt.Sprintf(`{"template_id":%q,"name":"test-ws-zero"}`, templateID.String())
+		resp, err := tool.Run(context.Background(), fantasy.ToolCall{
+			ID:    "call-1",
+			Name:  "create_workspace",
+			Input: input,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, resp.Content)
+
+		// TTLMillis should be nil when the setting is 0
+		// (template default).
+		require.Nil(t, capturedReq.TTLMillis)
+	})
+
+	t.Run("DBError_FallsBackToNil", func(t *testing.T) {
+		t.Parallel()
+		ctrl := gomock.NewController(t)
+		db := dbmock.NewMockStore(ctrl)
+
+		ownerID := uuid.New()
+		templateID := uuid.New()
+		workspaceID := uuid.New()
+		jobID := uuid.New()
+
+		db.EXPECT().
+			GetAuthorizationUserRoles(gomock.Any(), ownerID).
+			Return(database.GetAuthorizationUserRolesRow{
+				ID:     ownerID,
+				Roles:  []string{},
+				Groups: []string{},
+				Status: database.UserStatusActive,
+			}, nil)
+
+		// DB error when reading TTL setting.
+		db.EXPECT().
+			GetChatWorkspaceTTL(gomock.Any()).
+			Return(int64(0), xerrors.New("db error"))
+
+		db.EXPECT().
+			GetLatestWorkspaceBuildByWorkspaceID(gomock.Any(), workspaceID).
+			Return(database.WorkspaceBuild{
+				WorkspaceID: workspaceID,
+				JobID:       jobID,
+			}, nil)
+		db.EXPECT().
+			GetProvisionerJobByID(gomock.Any(), jobID).
+			Return(database.ProvisionerJob{
+				ID:        jobID,
+				JobStatus: database.ProvisionerJobStatusSucceeded,
+			}, nil)
+
+		db.EXPECT().
+			GetWorkspaceAgentsInLatestBuildByWorkspaceID(gomock.Any(), workspaceID).
+			Return([]database.WorkspaceAgent{}, nil)
+
+		var capturedReq codersdk.CreateWorkspaceRequest
+		createFn := func(_ context.Context, _ uuid.UUID, req codersdk.CreateWorkspaceRequest) (codersdk.Workspace, error) {
+			capturedReq = req
+			return codersdk.Workspace{
+				ID:        workspaceID,
+				Name:      req.Name,
+				OwnerName: "testuser",
+			}, nil
+		}
+
+		tool := CreateWorkspace(CreateWorkspaceOptions{
+			DB:          db,
+			OwnerID:     ownerID,
+			ChatID:      uuid.Nil,
+			CreateFn:    createFn,
+			WorkspaceMu: &sync.Mutex{},
+			Logger:      slogtest.Make(t, nil),
+		})
+
+		input := fmt.Sprintf(`{"template_id":%q,"name":"test-ws-dberr"}`, templateID.String())
+		resp, err := tool.Run(context.Background(), fantasy.ToolCall{
+			ID:    "call-1",
+			Name:  "create_workspace",
+			Input: input,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, resp.Content)
+
+		// DB error should fall back to nil (template default).
+		require.Nil(t, capturedReq.TTLMillis)
 	})
 }
 

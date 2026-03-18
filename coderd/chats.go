@@ -2600,6 +2600,65 @@ func (api *API) putChatDesktopEnabled(rw http.ResponseWriter, r *http.Request) {
 
 // EXPERIMENTAL: this endpoint is experimental and is subject to change.
 //
+// @Summary Get chat workspace TTL
+// @x-apidocgen {"skip": true}
+//
+//nolint:revive // get-return: revive assumes get* must be a getter, but this is an HTTP handler.
+func (api *API) getChatWorkspaceTTL(rw http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	ttlNs, err := api.Database.GetChatWorkspaceTTL(ctx)
+	if err != nil {
+		httpapi.Write(ctx, rw, http.StatusInternalServerError, codersdk.Response{
+			Message: "Internal error fetching workspace TTL setting.",
+			Detail:  err.Error(),
+		})
+		return
+	}
+	httpapi.Write(ctx, rw, http.StatusOK, codersdk.ChatWorkspaceTTLResponse{
+		WorkspaceTTLMs: ttlNs / int64(time.Millisecond),
+	})
+}
+
+// EXPERIMENTAL: this endpoint is experimental and is subject to change.
+//
+// @Summary Update chat workspace TTL
+// @x-apidocgen {"skip": true}
+func (api *API) putChatWorkspaceTTL(rw http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if !api.Authorize(r, policy.ActionUpdate, rbac.ResourceDeploymentConfig) {
+		httpapi.Forbidden(rw)
+		return
+	}
+
+	var req codersdk.UpdateChatWorkspaceTTLRequest
+	if !httpapi.Read(ctx, rw, r, &req) {
+		return
+	}
+	// Maximum TTL matches the workspace TTL maximum (30 days).
+	const maxTTLMs = int64(30 * 24 * time.Hour / time.Millisecond)
+	if req.WorkspaceTTLMs < 0 || req.WorkspaceTTLMs > maxTTLMs {
+		httpapi.Write(ctx, rw, http.StatusBadRequest, codersdk.Response{
+			Message: fmt.Sprintf("Workspace TTL must be between 0 and %d ms (30 days).", maxTTLMs),
+		})
+		return
+	}
+
+	ttlNs := req.WorkspaceTTLMs * int64(time.Millisecond)
+	if err := api.Database.UpsertChatWorkspaceTTL(ctx, ttlNs); httpapi.Is404Error(err) {
+		httpapi.ResourceNotFound(rw)
+		return
+	} else if err != nil {
+		httpapi.Write(ctx, rw, http.StatusInternalServerError, codersdk.Response{
+			Message: "Internal error updating workspace TTL setting.",
+			Detail:  err.Error(),
+		})
+		return
+	}
+	rw.WriteHeader(http.StatusNoContent)
+}
+
+// EXPERIMENTAL: this endpoint is experimental and is subject to change.
+//
 //nolint:revive // get-return: revive assumes get* must be a getter, but this is an HTTP handler.
 func (api *API) getUserChatCustomPrompt(rw http.ResponseWriter, r *http.Request) {
 	var (

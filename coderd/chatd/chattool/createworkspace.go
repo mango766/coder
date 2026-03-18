@@ -140,8 +140,25 @@ func CreateWorkspace(options CreateWorkspaceOptions) fantasy.AgentTool {
 				ctx = ownerCtx
 			}
 
+			var ttlMs *int64
+			if options.DB != nil {
+				ttlNs, err := options.DB.GetChatWorkspaceTTL(ctx)
+				if err != nil {
+					options.Logger.Warn(ctx, "failed to read chat workspace TTL setting, using template default",
+						slog.Error(err),
+					)
+				} else if ttlNs > 0 {
+					ms := ttlNs / int64(time.Millisecond)
+					if ms > 0 {
+						ttlMs = &ms
+					}
+				}
+				// ttlNs == 0 means "use template default", so ttlMs stays nil.
+			}
+
 			createReq := codersdk.CreateWorkspaceRequest{
 				TemplateID: templateID,
+				TTLMillis:  ttlMs,
 			}
 
 			// Resolve workspace name.

@@ -15978,6 +15978,23 @@ func (q *sqlQuerier) GetChatSystemPrompt(ctx context.Context) (string, error) {
 	return chat_system_prompt, err
 }
 
+const getChatWorkspaceTTL = `-- name: GetChatWorkspaceTTL :one
+SELECT
+    COALESCE(
+        (SELECT value::bigint FROM site_configs WHERE key = 'agents_workspace_ttl'),
+        3600000000000
+    )::bigint AS workspace_ttl
+`
+
+// Returns the global TTL for chat workspaces in nanoseconds.
+// Default: 3600000000000 (1 hour).
+func (q *sqlQuerier) GetChatWorkspaceTTL(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getChatWorkspaceTTL)
+	var workspace_ttl int64
+	err := row.Scan(&workspace_ttl)
+	return workspace_ttl, err
+}
+
 const getDERPMeshKey = `-- name: GetDERPMeshKey :one
 SELECT value FROM site_configs WHERE key = 'derp_mesh_key'
 `
@@ -16189,6 +16206,19 @@ ON CONFLICT (key) DO UPDATE SET value = $1 WHERE site_configs.key = 'agents_chat
 
 func (q *sqlQuerier) UpsertChatSystemPrompt(ctx context.Context, value string) error {
 	_, err := q.db.ExecContext(ctx, upsertChatSystemPrompt, value)
+	return err
+}
+
+const upsertChatWorkspaceTTL = `-- name: UpsertChatWorkspaceTTL :exec
+INSERT INTO site_configs (key, value)
+VALUES ('agents_workspace_ttl', $1::bigint::text)
+ON CONFLICT (key) DO UPDATE
+SET value = $1::bigint::text
+WHERE site_configs.key = 'agents_workspace_ttl'
+`
+
+func (q *sqlQuerier) UpsertChatWorkspaceTTL(ctx context.Context, workspaceTtl int64) error {
+	_, err := q.db.ExecContext(ctx, upsertChatWorkspaceTTL, workspaceTtl)
 	return err
 }
 
