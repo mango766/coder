@@ -647,7 +647,7 @@ func (s *MethodTestSuite) TestChats() {
 	}))
 	s.Run("GetChatTemplateAllowlist", s.Mocked(func(dbm *dbmock.MockStore, _ *gofakeit.Faker, check *expects) {
 		dbm.EXPECT().GetChatTemplateAllowlist(gomock.Any()).Return("", nil).AnyTimes()
-		check.Args().Asserts()
+		check.Args().Asserts(rbac.ResourceDeploymentConfig, policy.ActionRead)
 	}))
 	s.Run("GetEnabledChatModelConfigs", s.Mocked(func(dbm *dbmock.MockStore, faker *gofakeit.Faker, check *expects) {
 		configA := testutil.Fake(s.T(), faker, database.ChatModelConfig{})

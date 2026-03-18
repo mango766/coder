@@ -4749,83 +4749,72 @@ func TestChatDesktopEnabled(t *testing.T) {
 func TestChatTemplateAllowlist(t *testing.T) {
 	t.Parallel()
 
+	adminClient := newChatClient(t)
+	firstUser := coderdtest.CreateFirstUser(t, adminClient)
+	memberClient, _ := coderdtest.CreateAnotherUser(t, adminClient, firstUser.OrganizationID)
+
+	//nolint:paralleltest // Sequential: subtests share a single coderdtest instance.
 	t.Run("ReturnsEmptyWhenUnset", func(t *testing.T) {
-		t.Parallel()
-		client := newChatClient(t)
-		_ = coderdtest.CreateFirstUser(t, client)
 		ctx := testutil.Context(t, testutil.WaitLong)
-		resp, err := client.GetChatTemplateAllowlist(ctx)
+
+		resp, err := adminClient.GetChatTemplateAllowlist(ctx)
 		require.NoError(t, err)
 		require.Empty(t, resp.TemplateIDs)
 	})
 
+	//nolint:paralleltest // Sequential: subtests share a single coderdtest instance.
 	t.Run("AdminCanSet", func(t *testing.T) {
-		t.Parallel()
-		client := newChatClient(t)
-		_ = coderdtest.CreateFirstUser(t, client)
 		ctx := testutil.Context(t, testutil.WaitLong)
+
 		ids := []string{uuid.NewString(), uuid.NewString()}
-		err := client.UpdateChatTemplateAllowlist(ctx, codersdk.ChatTemplateAllowlist{TemplateIDs: ids})
+		err := adminClient.UpdateChatTemplateAllowlist(ctx, codersdk.ChatTemplateAllowlist{TemplateIDs: ids})
 		require.NoError(t, err)
-		resp, err := client.GetChatTemplateAllowlist(ctx)
+		resp, err := adminClient.GetChatTemplateAllowlist(ctx)
 		require.NoError(t, err)
 		require.ElementsMatch(t, ids, resp.TemplateIDs)
 	})
 
+	//nolint:paralleltest // Sequential: subtests share a single coderdtest instance.
 	t.Run("AdminCanClear", func(t *testing.T) {
-		t.Parallel()
-		client := newChatClient(t)
-		_ = coderdtest.CreateFirstUser(t, client)
 		ctx := testutil.Context(t, testutil.WaitLong)
-		// Set first.
-		ids := []string{uuid.NewString()}
-		err := client.UpdateChatTemplateAllowlist(ctx, codersdk.ChatTemplateAllowlist{TemplateIDs: ids})
+
+		err := adminClient.UpdateChatTemplateAllowlist(ctx, codersdk.ChatTemplateAllowlist{TemplateIDs: []string{}})
 		require.NoError(t, err)
-		// Clear.
-		err = client.UpdateChatTemplateAllowlist(ctx, codersdk.ChatTemplateAllowlist{TemplateIDs: []string{}})
-		require.NoError(t, err)
-		resp, err := client.GetChatTemplateAllowlist(ctx)
+		resp, err := adminClient.GetChatTemplateAllowlist(ctx)
 		require.NoError(t, err)
 		require.Empty(t, resp.TemplateIDs)
 	})
 
-	t.Run("NonAdminCanRead", func(t *testing.T) {
-		t.Parallel()
-		client := newChatClient(t)
-		admin := coderdtest.CreateFirstUser(t, client)
-		memberClient, _ := coderdtest.CreateAnotherUser(t, client, admin.OrganizationID)
+	//nolint:paralleltest // Sequential: subtests share a single coderdtest instance.
+	t.Run("NonAdminReadFails", func(t *testing.T) {
 		ctx := testutil.Context(t, testutil.WaitLong)
-		resp, err := memberClient.GetChatTemplateAllowlist(ctx)
-		require.NoError(t, err)
-		require.Empty(t, resp.TemplateIDs)
+
+		_, err := memberClient.GetChatTemplateAllowlist(ctx)
+		requireSDKError(t, err, http.StatusForbidden)
 	})
 
+	//nolint:paralleltest // Sequential: subtests share a single coderdtest instance.
 	t.Run("NonAdminWriteFails", func(t *testing.T) {
-		t.Parallel()
-		client := newChatClient(t)
-		admin := coderdtest.CreateFirstUser(t, client)
-		memberClient, _ := coderdtest.CreateAnotherUser(t, client, admin.OrganizationID)
 		ctx := testutil.Context(t, testutil.WaitLong)
+
 		err := memberClient.UpdateChatTemplateAllowlist(ctx, codersdk.ChatTemplateAllowlist{TemplateIDs: []string{uuid.NewString()}})
 		requireSDKError(t, err, http.StatusForbidden)
 	})
 
 	t.Run("UnauthenticatedFails", func(t *testing.T) {
 		t.Parallel()
-		client := newChatClient(t)
-		_ = coderdtest.CreateFirstUser(t, client)
 		ctx := testutil.Context(t, testutil.WaitLong)
-		anonClient := codersdk.New(client.URL)
+
+		anonClient := codersdk.New(adminClient.URL)
 		err := anonClient.UpdateChatTemplateAllowlist(ctx, codersdk.ChatTemplateAllowlist{TemplateIDs: []string{uuid.NewString()}})
 		requireSDKError(t, err, http.StatusUnauthorized)
 	})
 
+	//nolint:paralleltest // Sequential: subtests share a single coderdtest instance.
 	t.Run("InvalidUUIDRejected", func(t *testing.T) {
-		t.Parallel()
-		client := newChatClient(t)
-		_ = coderdtest.CreateFirstUser(t, client)
 		ctx := testutil.Context(t, testutil.WaitLong)
-		err := client.UpdateChatTemplateAllowlist(ctx, codersdk.ChatTemplateAllowlist{TemplateIDs: []string{"not-a-uuid"}})
+
+		err := adminClient.UpdateChatTemplateAllowlist(ctx, codersdk.ChatTemplateAllowlist{TemplateIDs: []string{"not-a-uuid"}})
 		requireSDKError(t, err, http.StatusBadRequest)
 	})
 }
