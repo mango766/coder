@@ -3731,11 +3731,12 @@ func (p *Server) dispatchPush(
 
 // Close stops the processor and waits for it to finish.
 func (p *Server) Close() error {
+	if unsub := p.configCacheUnsubscribe; unsub != nil {
+		p.configCacheUnsubscribe = nil
+		unsub()
+	}
 	p.cancel()
 	<-p.closed
 	p.inflight.Wait()
-	if p.configCacheUnsubscribe != nil {
-		p.configCacheUnsubscribe()
-	}
 	return nil
 }
