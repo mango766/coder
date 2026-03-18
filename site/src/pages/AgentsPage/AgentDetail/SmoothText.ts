@@ -111,7 +111,9 @@ export class SmoothTextEngine {
 
 	private frame = (timestampMs: number): void => {
 		if (this.previousTimestamp !== null) {
-			const dtMs = timestampMs - this.previousTimestamp;
+			// Clamp to prevent charBudget inflation after long
+			// background periods where RAF was paused by the browser.
+			const dtMs = Math.min(100, timestampMs - this.previousTimestamp);
 			const prevLength = this.visibleLengthValue;
 			this.tick(dtMs);
 			if (this.visibleLengthValue !== prevLength) {
