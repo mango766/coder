@@ -411,6 +411,22 @@ export const updateChatDesktopEnabled = (queryClient: QueryClient) => ({
 	},
 });
 
+const chatTemplateAllowlistKey = ["chat-template-allowlist"] as const;
+
+export const chatTemplateAllowlist = () => ({
+	queryKey: chatTemplateAllowlistKey,
+	queryFn: () => API.getChatTemplateAllowlist(),
+});
+
+export const updateChatTemplateAllowlist = (queryClient: QueryClient) => ({
+	mutationFn: API.updateChatTemplateAllowlist,
+	onSuccess: async () => {
+		await queryClient.invalidateQueries({
+			queryKey: chatTemplateAllowlistKey,
+		});
+	},
+});
+
 const chatUserCustomPromptKey = ["chat-user-custom-prompt"] as const;
 
 export const chatUserCustomPrompt = () => ({

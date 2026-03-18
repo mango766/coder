@@ -3094,6 +3094,23 @@ class ApiMethods {
 		await this.axios.put("/api/experimental/chats/config/desktop-enabled", req);
 	};
 
+	getChatTemplateAllowlist =
+		async (): Promise<TypesGen.ChatTemplateAllowlist> => {
+			const response = await this.axios.get<TypesGen.ChatTemplateAllowlist>(
+				"/api/experimental/chats/config/template-allowlist",
+			);
+			return response.data;
+		};
+
+	updateChatTemplateAllowlist = async (
+		req: TypesGen.ChatTemplateAllowlist,
+	): Promise<void> => {
+		await this.axios.put(
+			"/api/experimental/chats/config/template-allowlist",
+			req,
+		);
+	};
+
 	getUserChatCustomPrompt =
 		async (): Promise<TypesGen.UserChatCustomPrompt> => {
 			const response = await this.axios.get<TypesGen.UserChatCustomPrompt>(

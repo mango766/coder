@@ -1,4 +1,4 @@
-import { MockUserOwner } from "testHelpers/entities";
+import { MockTemplate, MockUserOwner } from "testHelpers/entities";
 import { withAuthProvider, withDashboardProvider } from "testHelpers/storybook";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { API } from "api/api";
@@ -35,6 +35,30 @@ const meta = {
 		spyOn(API, "updateUserChatCustomPrompt").mockResolvedValue({
 			custom_prompt: "",
 		});
+		spyOn(API, "getChatTemplateAllowlist").mockResolvedValue({
+			template_ids: [],
+		});
+		spyOn(API, "updateChatTemplateAllowlist").mockResolvedValue();
+		spyOn(API, "getTemplates").mockResolvedValue([
+			{
+				...MockTemplate,
+				id: "abc-123",
+				name: "docker-dev",
+				display_name: "Docker Development",
+			},
+			{
+				...MockTemplate,
+				id: "def-456",
+				name: "kubernetes-prod",
+				display_name: "Kubernetes Production",
+			},
+			{
+				...MockTemplate,
+				id: "ghi-789",
+				name: "aws-windows",
+				display_name: "AWS Windows Desktop",
+			},
+		]);
 	},
 } satisfies Meta<typeof SettingsPageContent>;
 
@@ -66,5 +90,13 @@ export const TogglesDesktop: Story = {
 				enable_desktop: true,
 			});
 		});
+	},
+};
+
+export const TemplatesSection: Story = {
+	args: {
+		activeSection: "templates",
+		canManageChatModelConfigs: true,
+		canSetSystemPrompt: true,
 	},
 };

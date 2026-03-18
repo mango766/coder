@@ -347,6 +347,13 @@ type UpdateChatDesktopEnabledRequest struct {
 	EnableDesktop bool `json:"enable_desktop"`
 }
 
+// ChatTemplateAllowlist is the request and response body for the
+// chat template allowlist configuration endpoint. An empty list
+// means all templates are allowed.
+type ChatTemplateAllowlist struct {
+	TemplateIDs []string `json:"template_ids"`
+}
+
 // ChatProviderConfigSource describes how a provider entry is sourced.
 type ChatProviderConfigSource string
 
@@ -1314,6 +1321,33 @@ func (c *Client) GetChatDesktopEnabled(ctx context.Context) (ChatDesktopEnabledR
 // UpdateChatDesktopEnabled updates the deployment-wide desktop setting.
 func (c *Client) UpdateChatDesktopEnabled(ctx context.Context, req UpdateChatDesktopEnabledRequest) error {
 	res, err := c.Request(ctx, http.MethodPut, "/api/experimental/chats/config/desktop-enabled", req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		return ReadBodyAsError(res)
+	}
+	return nil
+}
+
+// GetChatTemplateAllowlist returns the deployment-wide chat template allowlist.
+func (c *Client) GetChatTemplateAllowlist(ctx context.Context) (ChatTemplateAllowlist, error) {
+	res, err := c.Request(ctx, http.MethodGet, "/api/experimental/chats/config/template-allowlist", nil)
+	if err != nil {
+		return ChatTemplateAllowlist{}, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return ChatTemplateAllowlist{}, ReadBodyAsError(res)
+	}
+	var resp ChatTemplateAllowlist
+	return resp, json.NewDecoder(res.Body).Decode(&resp)
+}
+
+// UpdateChatTemplateAllowlist updates the deployment-wide chat template allowlist.
+func (c *Client) UpdateChatTemplateAllowlist(ctx context.Context, req ChatTemplateAllowlist) error {
+	res, err := c.Request(ctx, http.MethodPut, "/api/experimental/chats/config/template-allowlist", req)
 	if err != nil {
 		return err
 	}

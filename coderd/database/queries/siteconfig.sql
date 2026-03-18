@@ -160,3 +160,11 @@ SET value = CASE
     ELSE 'false'
 END
 WHERE site_configs.key = 'agents_desktop_enabled';
+
+-- name: GetChatTemplateAllowlist :one
+SELECT
+	COALESCE((SELECT value FROM site_configs WHERE key = 'agents_template_allowlist'), '') :: text AS template_allowlist;
+
+-- name: UpsertChatTemplateAllowlist :exec
+INSERT INTO site_configs (key, value) VALUES ('agents_template_allowlist', @template_allowlist)
+ON CONFLICT (key) DO UPDATE SET value = @template_allowlist WHERE site_configs.key = 'agents_template_allowlist';
