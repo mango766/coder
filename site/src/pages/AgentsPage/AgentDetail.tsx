@@ -866,6 +866,7 @@ const AgentDetail: FC = () => {
 			chatRecord={chatRecord}
 			isArchived={isArchived}
 			hasWorkspace={Boolean(workspaceId)}
+			workspaceAgent={workspaceAgent}
 			store={store}
 			editing={editing}
 			pendingEditMessageId={pendingEditMessageId}

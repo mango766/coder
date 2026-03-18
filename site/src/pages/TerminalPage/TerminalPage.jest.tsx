@@ -52,6 +52,7 @@ const expectTerminalText = (container: HTMLElement, text: string) => {
 
 describe("TerminalPage", () => {
 	afterEach(() => {
+		jest.restoreAllMocks();
 		WS.clean();
 	});
 

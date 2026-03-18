@@ -17,11 +17,11 @@ import type {
 	WorkspacesResponse,
 } from "api/typesGenerated";
 import type { Dayjs } from "dayjs";
+import type { ConnectionStatus } from "modules/terminal/types";
 import {
 	type WorkspacePermissions,
 	workspaceChecks,
 } from "modules/workspaces/permissions";
-import type { ConnectionStatus } from "pages/TerminalPage/types";
 import type {
 	MutationOptions,
 	QueryClient,
