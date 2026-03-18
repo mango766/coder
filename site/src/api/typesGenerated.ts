@@ -2151,7 +2151,7 @@ export interface CreateGroupRequest {
 	readonly quota_allowance: number;
 }
 
-// From codersdk/mcpserverconfigs.go
+// From codersdk/mcp.go
 /**
  * CreateMCPServerConfigRequest is the request to create a new MCP server config.
  */
@@ -3706,7 +3706,7 @@ export interface LoginWithPasswordResponse {
 	readonly session_token: string;
 }
 
-// From codersdk/mcpserverconfigs.go
+// From codersdk/mcp.go
 /**
  * MCPServerConfig represents an admin-configured MCP server.
  */
@@ -3732,6 +3732,7 @@ export interface MCPServerConfig {
 	 */
 	readonly api_key_header?: string;
 	readonly has_api_key: boolean;
+	readonly has_custom_headers: boolean;
 	/**
 	 * Tool governance.
 	 */
@@ -3742,7 +3743,6 @@ export interface MCPServerConfig {
 	 */
 	readonly availability: string; // "force_on", "default_on", "default_off"
 	readonly enabled: boolean;
-	readonly tool_count: number;
 	readonly created_at: string;
 	readonly updated_at: string;
 	/**
@@ -3751,7 +3751,7 @@ export interface MCPServerConfig {
 	readonly auth_connected?: boolean;
 }
 
-// From codersdk/mcpserverconfigs.go
+// From codersdk/mcp.go
 /**
  * MCPServerTool represents a single tool from an MCP server's snapshot.
  */
@@ -3761,7 +3761,7 @@ export interface MCPServerTool {
 	readonly input_schema: Record<string, string>;
 }
 
-// From codersdk/mcpserverconfigs.go
+// From codersdk/mcp.go
 /**
  * MCPServerToolSnapshot represents an admin-approved snapshot of tools.
  */
@@ -6826,7 +6826,7 @@ export interface UpdateInboxNotificationReadStatusResponse {
 	readonly unread_count: number;
 }
 
-// From codersdk/mcpserverconfigs.go
+// From codersdk/mcp.go
 /**
  * UpdateMCPServerConfigRequest is the request to update an MCP server config.
  */
