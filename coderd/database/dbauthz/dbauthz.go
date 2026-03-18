@@ -1700,7 +1700,14 @@ func (q *querier) CountAIBridgeInterceptions(ctx context.Context, arg database.C
 }
 
 func (q *querier) CountActiveChatAutomationRuns(ctx context.Context, automationID uuid.UUID) (int64, error) {
-	panic("not implemented")
+	automation, err := q.db.GetChatAutomationByID(ctx, automationID)
+	if err != nil {
+		return 0, err
+	}
+	if err := q.authorizeContext(ctx, policy.ActionRead, rbac.ResourceChat.WithOwner(automation.OwnerID.String())); err != nil {
+		return 0, err
+	}
+	return q.db.CountActiveChatAutomationRuns(ctx, automationID)
 }
 
 func (q *querier) CountAuditLogs(ctx context.Context, arg database.CountAuditLogsParams) (int64, error) {
@@ -1822,7 +1829,14 @@ func (q *querier) DeleteApplicationConnectAPIKeysByUserID(ctx context.Context, u
 }
 
 func (q *querier) DeleteChatAutomation(ctx context.Context, id uuid.UUID) error {
-	panic("not implemented")
+	automation, err := q.db.GetChatAutomationByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := q.authorizeContext(ctx, policy.ActionDelete, rbac.ResourceChat.WithOwner(automation.OwnerID.String())); err != nil {
+		return err
+	}
+	return q.db.DeleteChatAutomation(ctx, id)
 }
 
 func (q *querier) DeleteChatMessagesAfterID(ctx context.Context, arg database.DeleteChatMessagesAfterIDParams) error {
@@ -2427,15 +2441,32 @@ func (q *querier) GetAuthorizationUserRoles(ctx context.Context, userID uuid.UUI
 }
 
 func (q *querier) GetChatAutomationByID(ctx context.Context, id uuid.UUID) (database.ChatAutomation, error) {
-	panic("not implemented")
+	automation, err := q.db.GetChatAutomationByID(ctx, id)
+	if err != nil {
+		return database.ChatAutomation{}, err
+	}
+	if err := q.authorizeContext(ctx, policy.ActionRead, rbac.ResourceChat.WithOwner(automation.OwnerID.String())); err != nil {
+		return database.ChatAutomation{}, err
+	}
+	return automation, nil
 }
 
 func (q *querier) GetChatAutomationRunsByAutomationID(ctx context.Context, arg database.GetChatAutomationRunsByAutomationIDParams) ([]database.ChatAutomationRun, error) {
-	panic("not implemented")
+	automation, err := q.db.GetChatAutomationByID(ctx, arg.AutomationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := q.authorizeContext(ctx, policy.ActionRead, rbac.ResourceChat.WithOwner(automation.OwnerID.String())); err != nil {
+		return nil, err
+	}
+	return q.db.GetChatAutomationRunsByAutomationID(ctx, arg)
 }
 
 func (q *querier) GetChatAutomationsByOwnerID(ctx context.Context, ownerID uuid.UUID) ([]database.ChatAutomation, error) {
-	panic("not implemented")
+	if err := q.authorizeContext(ctx, policy.ActionRead, rbac.ResourceChat.WithOwner(ownerID.String())); err != nil {
+		return nil, err
+	}
+	return q.db.GetChatAutomationsByOwnerID(ctx, ownerID)
 }
 
 func (q *querier) GetChatByID(ctx context.Context, id uuid.UUID) (database.Chat, error) {
@@ -2724,7 +2755,11 @@ func (q *querier) GetEnabledChatProviders(ctx context.Context) ([]database.ChatP
 }
 
 func (q *querier) GetEnabledCronChatAutomations(ctx context.Context) ([]database.ChatAutomation, error) {
-	panic("not implemented")
+	// Called from the autochat cron executor, which runs as a system process.
+	if err := q.authorizeContext(ctx, policy.ActionRead, rbac.ResourceChat); err != nil {
+		return nil, err
+	}
+	return q.db.GetEnabledCronChatAutomations(ctx)
 }
 
 func (q *querier) GetExternalAuthLink(ctx context.Context, arg database.GetExternalAuthLinkParams) (database.ExternalAuthLink, error) {
@@ -4502,11 +4537,21 @@ func (q *querier) InsertChat(ctx context.Context, arg database.InsertChatParams)
 }
 
 func (q *querier) InsertChatAutomation(ctx context.Context, arg database.InsertChatAutomationParams) (database.ChatAutomation, error) {
-	panic("not implemented")
+	if err := q.authorizeContext(ctx, policy.ActionCreate, rbac.ResourceChat.WithOwner(arg.OwnerID.String())); err != nil {
+		return database.ChatAutomation{}, err
+	}
+	return q.db.InsertChatAutomation(ctx, arg)
 }
 
 func (q *querier) InsertChatAutomationRun(ctx context.Context, arg database.InsertChatAutomationRunParams) (database.ChatAutomationRun, error) {
-	panic("not implemented")
+	automation, err := q.db.GetChatAutomationByID(ctx, arg.AutomationID)
+	if err != nil {
+		return database.ChatAutomationRun{}, err
+	}
+	if err := q.authorizeContext(ctx, policy.ActionUpdate, rbac.ResourceChat.WithOwner(automation.OwnerID.String())); err != nil {
+		return database.ChatAutomationRun{}, err
+	}
+	return q.db.InsertChatAutomationRun(ctx, arg)
 }
 
 func (q *querier) InsertChatFile(ctx context.Context, arg database.InsertChatFileParams) (database.InsertChatFileRow, error) {
@@ -5341,15 +5386,35 @@ func (q *querier) UpdateAPIKeyByID(ctx context.Context, arg database.UpdateAPIKe
 }
 
 func (q *querier) UpdateChatAutomation(ctx context.Context, arg database.UpdateChatAutomationParams) (database.ChatAutomation, error) {
-	panic("not implemented")
+	automation, err := q.db.GetChatAutomationByID(ctx, arg.ID)
+	if err != nil {
+		return database.ChatAutomation{}, err
+	}
+	if err := q.authorizeContext(ctx, policy.ActionUpdate, rbac.ResourceChat.WithOwner(automation.OwnerID.String())); err != nil {
+		return database.ChatAutomation{}, err
+	}
+	return q.db.UpdateChatAutomation(ctx, arg)
 }
 
 func (q *querier) UpdateChatAutomationRun(ctx context.Context, arg database.UpdateChatAutomationRunParams) (database.ChatAutomationRun, error) {
-	panic("not implemented")
+	// Called from the autochat executor, which runs as a system process.
+	// There is no GetChatAutomationRunByID method, so we authorize
+	// against the unscoped ResourceChat which requires system access.
+	if err := q.authorizeContext(ctx, policy.ActionUpdate, rbac.ResourceChat); err != nil {
+		return database.ChatAutomationRun{}, err
+	}
+	return q.db.UpdateChatAutomationRun(ctx, arg)
 }
 
 func (q *querier) UpdateChatAutomationWebhookSecret(ctx context.Context, arg database.UpdateChatAutomationWebhookSecretParams) (database.ChatAutomation, error) {
-	panic("not implemented")
+	automation, err := q.db.GetChatAutomationByID(ctx, arg.ID)
+	if err != nil {
+		return database.ChatAutomation{}, err
+	}
+	if err := q.authorizeContext(ctx, policy.ActionUpdate, rbac.ResourceChat.WithOwner(automation.OwnerID.String())); err != nil {
+		return database.ChatAutomation{}, err
+	}
+	return q.db.UpdateChatAutomationWebhookSecret(ctx, arg)
 }
 
 func (q *querier) UpdateChatByID(ctx context.Context, arg database.UpdateChatByIDParams) (database.Chat, error) {
