@@ -1,18 +1,25 @@
 import { getErrorDetail, getErrorMessage } from "api/errors";
-import { deleteGroup, group, groupPermissions } from "api/queries/groups";
-import type { Group } from "api/typesGenerated";
+import {
+	deleteGroup,
+	group,
+	groupMembers,
+	groupPermissions,
+} from "api/queries/groups";
+import type { Group, ReducedUser } from "api/typesGenerated";
 import { ErrorAlert } from "components/Alert/ErrorAlert";
 import { Button } from "components/Button/Button";
 import { DeleteDialog } from "components/Dialogs/DeleteDialog/DeleteDialog";
 import { useFilter } from "components/Filter/Filter";
 import type { UsersFilter } from "components/Filter/UsersFilter";
 import { Loader } from "components/Loader/Loader";
+import type { PaginationResult } from "components/PaginationWidget/PaginationContainer";
 import {
 	SettingsHeader,
 	SettingsHeaderDescription,
 	SettingsHeaderTitle,
 } from "components/SettingsHeader/SettingsHeader";
 import { TabLink, Tabs, TabsList } from "components/Tabs/Tabs";
+import { usePaginatedQuery } from "hooks/usePaginatedQuery";
 import { TrashIcon } from "lucide-react";
 import { type ComponentProps, type FC, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "react-query";
@@ -24,14 +31,15 @@ import {
 	useSearchParams,
 } from "react-router";
 import { toast } from "sonner";
-import { prepareQuery } from "utils/filters";
 import { pageTitle } from "utils/page";
 
 export type GroupPageOutletContext = {
 	group: Group;
+	members: readonly ReducedUser[];
 	permissions: { canUpdateGroup: boolean };
 	organization: string;
 	groupQuery: ReturnType<typeof useQuery>;
+	membersQuery: PaginationResult;
 	filterProps: ComponentProps<typeof UsersFilter>;
 };
 
@@ -45,13 +53,15 @@ const GroupPage: FC = () => {
 	const navigate = useNavigate();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const groupQuery = useQuery(
-		group(organization, groupName, {
-			q: prepareQuery(searchParams.get("filter") ?? ""),
-		}),
+		group(organization, groupName, { exclude_members: true }),
+	);
+	const membersQuery = usePaginatedQuery(
+		groupMembers(organization, groupName, searchParams),
 	);
 	const useFilterResult = useFilter({
 		searchParams,
 		onSearchParamsChange: setSearchParams,
+		onUpdate: membersQuery.goToFirstPage,
 	});
 
 	const groupData = groupQuery.data;
@@ -63,7 +73,12 @@ const GroupPage: FC = () => {
 		deleteGroup(queryClient, organization),
 	);
 	const [isDeletingGroup, setIsDeletingGroup] = useState(false);
-	const isLoading = groupQuery.isLoading || !groupData || !permissions;
+	const isLoading =
+		groupQuery.isLoading ||
+		!groupData ||
+		!permissions ||
+		membersQuery.isLoading ||
+		!membersQuery.data;
 	const canUpdateGroup = permissions ? permissions.canUpdateGroup : false;
 
 	const title = (
@@ -72,8 +87,9 @@ const GroupPage: FC = () => {
 		</title>
 	);
 
-	if (groupQuery.error) {
-		return <ErrorAlert error={groupQuery.error} />;
+	const error = groupQuery.error || membersQuery.error;
+	if (error) {
+		return <ErrorAlert error={error} />;
 	}
 
 	if (isLoading) {
@@ -135,9 +151,11 @@ const GroupPage: FC = () => {
 					context={
 						{
 							group: groupData,
+							members: membersQuery.data?.users || [],
 							permissions: { canUpdateGroup },
 							organization,
 							groupQuery,
+							membersQuery,
 							filterProps: {
 								filter: useFilterResult,
 								error: groupQuery.error,

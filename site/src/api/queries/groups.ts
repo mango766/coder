@@ -2,14 +2,14 @@ import { API } from "api/api";
 import type {
 	CreateGroupRequest,
 	Group,
+	GroupMembersResponse,
+	GroupRequest,
 	PatchGroupRequest,
 	UsersRequest,
 } from "api/typesGenerated";
-import {
-	keepPreviousData,
-	type QueryClient,
-	type UseQueryOptions,
-} from "react-query";
+import type { UsePaginatedQueryOptions } from "hooks/usePaginatedQuery";
+import type { QueryClient, UseQueryOptions } from "react-query";
+import { prepareQuery } from "utils/filters";
 
 type GroupSortOrder = "asc" | "desc";
 
@@ -36,7 +36,31 @@ export const groupsByOrganization = (organization: string) => {
 	} satisfies UseQueryOptions<Group[]>;
 };
 
+const getRootGroupQueryKey = (organization: string, groupName: string) => [
+	"organization",
+	organization,
+	"group",
+	groupName,
+];
+
 export const getGroupQueryKey = (
+	organization: string,
+	groupName: string,
+	req: GroupRequest,
+) => ["organization", organization, "group", groupName, req];
+
+export const group = (
+	organization: string,
+	groupName: string,
+	req: GroupRequest,
+): UseQueryOptions<Group> => {
+	return {
+		queryKey: getGroupQueryKey(organization, groupName, req),
+		queryFn: ({ signal }) => API.getGroup(organization, groupName, req, signal),
+	};
+};
+
+export const getGroupMembersQueryKey = (
 	organization: string,
 	groupName: string,
 	req?: UsersRequest,
@@ -45,20 +69,27 @@ export const getGroupQueryKey = (
 	return req ? [...base, req] : base;
 };
 
-export const group = (
+export function groupMembers(
 	organization: string,
 	groupName: string,
-	req?: UsersRequest,
-): UseQueryOptions<Group> => {
+	searchParams: URLSearchParams,
+): UsePaginatedQueryOptions<GroupMembersResponse, UsersRequest> {
 	return {
-		queryKey: getGroupQueryKey(organization, groupName, req),
-		queryFn: ({ signal }) => API.getGroup(organization, groupName, req, signal),
-		gcTime: 5 * 1000 * 60,
-		// Keep previous data to prevent the entire group page from reloading every
-		// time you search for a member.
-		placeholderData: keepPreviousData,
+		searchParams,
+		queryPayload: ({ limit, offset }) => {
+			return {
+				limit,
+				offset,
+				q: prepareQuery(searchParams.get("filter") ?? ""),
+			};
+		},
+
+		queryKey: ({ payload }) =>
+			getGroupMembersQueryKey(organization, groupName, payload),
+		queryFn: ({ payload, signal }) =>
+			API.getGroupMembers(organization, groupName, payload, signal),
 	};
-};
+}
 
 export type GroupsByUserId = Readonly<Map<string, readonly Group[]>>;
 
@@ -198,7 +229,7 @@ const invalidateGroup = (
 			queryKey: getGroupsByOrganizationQueryKey(organization),
 		}),
 		queryClient.invalidateQueries({
-			queryKey: getGroupQueryKey(organization, groupName),
+			queryKey: getRootGroupQueryKey(organization, groupName),
 		}),
 	]);
 

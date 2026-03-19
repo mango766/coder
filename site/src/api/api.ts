@@ -2126,11 +2126,25 @@ class ApiMethods {
 	getGroup = async (
 		organization: string,
 		groupName: string,
-		filter?: UsersRequest,
+		req: TypesGen.GroupRequest,
 		signal?: AbortSignal,
 	): Promise<TypesGen.Group> => {
 		const url = getURLWithSearchParams(
 			`/api/v2/organizations/${organization}/groups/${groupName}`,
+			req,
+		);
+		const response = await this.axios.get(url, { signal });
+		return response.data;
+	};
+
+	getGroupMembers = async (
+		organization: string,
+		groupName: string,
+		filter?: UsersRequest,
+		signal?: AbortSignal,
+	): Promise<TypesGen.GroupMembersResponse> => {
+		const url = getURLWithSearchParams(
+			`/api/v2/organizations/${organization}/groups/${groupName}/members`,
 			filter,
 		);
 		const response = await this.axios.get(url.toString(), { signal });
